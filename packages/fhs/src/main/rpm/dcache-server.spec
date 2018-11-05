@@ -1,6 +1,6 @@
 Summary: dCache Server
 Vendor: dCache.org
-Name: dcache
+Name: dcache-xdc
 Version: @Version@
 Release: @Release@
 BuildArch: noarch
@@ -31,7 +31,14 @@ Group: Applications/System
 %description
 dCache is a distributed mass storage system.
 
-This package contains the server components.
+This package contains a technical preview version of dCache, available
+to demonstrate new features developed through the eXtreme DataCloud
+project.
+
+DO NOT USE THIS RPM IN PRODUCTION ENVIRONMENTS.
+
+Instead, use supported versions of dCache, which are available from
+the dCache website https://www.dcache.org/
 
 %pre
 if [ -d /opt/d-cache/classes ]; then

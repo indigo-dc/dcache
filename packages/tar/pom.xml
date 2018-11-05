@@ -19,7 +19,7 @@
   </properties>
 
   <build>
-      <finalName>dcache-${project.version}</finalName>
+      <finalName>dcache-xdc-${project.version}</finalName>
       <plugins>
           <plugin>
               <artifactId>maven-resources-plugin</artifactId>
