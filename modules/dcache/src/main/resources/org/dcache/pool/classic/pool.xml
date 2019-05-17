@@ -3,22 +3,16 @@
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
        xmlns:context="http://www.springframework.org/schema/context"
        xmlns:task="http://www.springframework.org/schema/task"
-       xmlns:int="http://www.springframework.org/schema/integration"
-       xmlns:int-kafka="http://www.springframework.org/schema/integration/kafka"
-       xmlns:util="http://www.springframework.org/schema/util"
+
        xsi:schemaLocation="http://www.springframework.org/schema/beans
            http://www.springframework.org/schema/beans/spring-beans.xsd
            http://www.springframework.org/schema/context
            http://www.springframework.org/schema/context/spring-context.xsd
            http://www.springframework.org/schema/task
-           http://www.springframework.org/schema/task/spring-task.xsd
-           http://www.springframework.org/schema/integration/kafka
-           http://www.springframework.org/schema/integration/kafka/spring-integration-kafka.xsd
-           http://www.springframework.org/schema/integration
-           http://www.springframework.org/schema/integration/spring-integration.xsd
-           http://www.springframework.org/schema/util http://www.springframework.org/schema/util/spring-util.xsd">
+           http://www.springframework.org/schema/task/spring-task.xsd">
 
-  <context:property-placeholder/>
+
+    <context:property-placeholder/>
   <context:annotation-config/>
 
     <!--
@@ -110,8 +104,8 @@
     <constructor-arg value="${pool.name}"/>
   </bean>
 
-  <bean id="replica-store"
-	class="org.dcache.pool.repository.checksums.ChecksumReplicaStore">
+  <bean id="checksum-replica-store"
+        class="org.dcache.pool.repository.checksums.ChecksumReplicaStore">
       <constructor-arg>
           <bean class="org.dcache.pool.statistics.IoStatisticsReplicaStore">
               <constructor-arg>
@@ -126,6 +120,7 @@
                               <constructor-arg value="${pool.name}"/>
                           </bean>
                       </constructor-arg>
+
                       <constructor-arg ref="replica-state-policy"/>
                       <property name="poolName" value="${pool.name}"/>
                   </bean>
@@ -355,6 +350,12 @@
 
   </bean>
 
+  <bean id="signing-policy"
+        class="org.dcache.xrootd.security.SigningPolicy">
+    <constructor-arg name="secLvl" value="${pool.mover.xrootd.security.level}"/>
+    <constructor-arg name="force" value="${pool.mover.xrootd.security.force-signing}"/>
+  </bean>
+
   <bean id="xrootd-transfer-service" class="org.dcache.xrootd.pool.XrootdTransferService"
           depends-on="rep">
       <description>Xrootd transfer service</description>
@@ -394,6 +395,7 @@
           </bean>
       </property>
       <property name="thirdPartyShutdownExecutor" ref="workerThreadPool"/>
+    <property name="signingPolicy" ref="signing-policy"/>
   </bean>
 
   <bean id="http-transfer-service-parent" class="org.dcache.http.HttpTransferService"
@@ -568,74 +570,85 @@
 
        <bean id="listener" class="org.dcache.kafka.LoggingProducerListener"/>
 
-       <bean id="billing-template-remove"  class="org.springframework.kafka.core.KafkaTemplate">
-           <qualifier value="remove"/>
-           <constructor-arg>
-               <bean class="org.springframework.kafka.core.DefaultKafkaProducerFactory">
-                   <constructor-arg>
-                       <map>
-                           <entry key="bootstrap.servers" value="${pool.kafka.bootstrap-servers}"/>
-                           <entry key="key.serializer" value="org.apache.kafka.common.serialization.StringSerializer"/>
-                           <entry key="value.serializer" value="org.dcache.notification.RemoveFileInfoMessageSerializer"/>
-                           <entry key="client.id" value="${pool.cell.name}@${dcache.domain.name}-remove"/>
-                           <entry key="max.block.ms"
-				  value="#{ T(java.util.concurrent.TimeUnit).MILLISECONDS.convert(${pool.kafka.maximum-block}, '${pool.kafka.maximum-block.unit}')}" />
-                           <!-- The maximum number of times to retry a call before failing it.-->
-                           <entry key="retries" value="0" />
-                       </map>
-                   </constructor-arg>
-               </bean>
-           </constructor-arg>
-           <property name="defaultTopic" value="billing"/>
-           <property name="producerListener" ref="listener"/>
-       </bean>
+
+        <bean id="kafka-configs-remove" class="org.dcache.util.configuration.ConfigurationMapFactoryBean">
+            <property name="prefix" value="pool.kafka.producer.configs"/>
+            <property name="staticEnvironment">
+                <map>
+                    <entry key="bootstrap.servers" value="${pool.kafka.producer.bootstrap.servers}"/>
+                    <entry key="key.serializer" value="org.apache.kafka.common.serialization.StringSerializer"/>
+                    <entry key="value.serializer" value="org.dcache.notification.RemoveFileInfoMessageSerializer"/>
+                    <entry key="client.id" value="${pool.cell.name}@${dcache.domain.name}-remove"/>
+                </map>
+            </property>
+        </bean>
+
+
+
+        <bean id="billing-template-remove"  class="org.springframework.kafka.core.KafkaTemplate">
+            <qualifier value="remove"/>
+            <constructor-arg>
+                <bean class="org.springframework.kafka.core.DefaultKafkaProducerFactory">
+                    <constructor-arg name="configs" ref ="kafka-configs-remove"/>
+                </bean>
+            </constructor-arg>
+            <property name="defaultTopic" value="${pool.kafka.topic}"/>
+            <property name="producerListener" ref="listener"/>
+        </bean>
+
+
+        <bean id="kafka-configs-hsm" class="org.dcache.util.configuration.ConfigurationMapFactoryBean">
+            <property name="prefix" value="pool.kafka.producer.configs"/>
+            <property name="staticEnvironment">
+                <map>
+                    <entry key="bootstrap.servers" value="${pool.kafka.producer.bootstrap.servers}"/>
+                    <entry key="key.serializer" value="org.apache.kafka.common.serialization.StringSerializer"/>
+                    <entry key="value.serializer" value="org.dcache.notification.StorageInfoMessageSerializer"/>
+                    <entry key="client.id" value="${pool.cell.name}@${dcache.domain.name}-hsm"/>
+                </map>
+            </property>
+        </bean>
+
 
 
         <bean id="billing-template-hsm"  class="org.springframework.kafka.core.KafkaTemplate">
             <qualifier value="hsm"/>
             <constructor-arg>
                 <bean class="org.springframework.kafka.core.DefaultKafkaProducerFactory">
-                    <constructor-arg>
-                        <map>
-                            <entry key="bootstrap.servers" value="${pool.kafka.bootstrap-servers}"/>
-                            <entry key="key.serializer" value="org.apache.kafka.common.serialization.StringSerializer"/>
-                            <entry key="value.serializer" value="org.dcache.notification.StorageInfoMessageSerializer"/>
-                            <entry key="client.id" value="${pool.cell.name}@${dcache.domain.name}-hsm"/>
-                           <entry key="max.block.ms"
-				  value="#{ T(java.util.concurrent.TimeUnit).MILLISECONDS.convert(${pool.kafka.maximum-block}, '${pool.kafka.maximum-block.unit}')}" />
-                            <!-- The maximum number of times to retry a call before failing it.-->
-                            <entry key="retries" value="0" />
-                        </map>
-                    </constructor-arg>
+                    <constructor-arg name="configs" ref ="kafka-configs-hsm"/>
                 </bean>
             </constructor-arg>
-            <property name="defaultTopic" value="billing"/>
+            <property name="defaultTopic" value="${pool.kafka.topic}"/>
             <property name="producerListener" ref="listener"/>
         </bean>
+
+
+        <bean id="kafka-configs-transfer" class="org.dcache.util.configuration.ConfigurationMapFactoryBean">
+            <property name="prefix" value="pool.kafka.producer.configs"/>
+            <property name="staticEnvironment">
+                <map>
+                    <entry key="bootstrap.servers" value="${pool.kafka.producer.bootstrap.servers}"/>
+                    <entry key="key.serializer" value="org.apache.kafka.common.serialization.StringSerializer"/>
+                    <entry key="value.serializer" value="org.dcache.notification.BillingMessageSerializer"/>
+                    <entry key="client.id" value="${pool.cell.name}@${dcache.domain.name}-transfer"/>
+                </map>
+            </property>
+        </bean>
+
 
 
         <bean id="billing-template-transfer"  class="org.springframework.kafka.core.KafkaTemplate">
             <qualifier value="transfer"/>
             <constructor-arg>
                 <bean class="org.springframework.kafka.core.DefaultKafkaProducerFactory">
-                    <constructor-arg>
-                        <map>
-                            <entry key="bootstrap.servers" value="${pool.kafka.bootstrap-servers}"/>
-                            <entry key="key.serializer" value="org.apache.kafka.common.serialization.StringSerializer"/>
-                            <entry key="value.serializer" value="org.dcache.notification.BillingMessageSerializer"/>
-                            <entry key="client.id" value="${pool.cell.name}@${dcache.domain.name}-transfer"/>
-                           <entry key="max.block.ms"
-				  value="#{ T(java.util.concurrent.TimeUnit).MILLISECONDS.convert(${pool.kafka.maximum-block}, '${pool.kafka.maximum-block.unit}')}" />
-                            <!-- The maximum number of times to retry a call before failing it.-->
-                            <entry key="retries" value="0" />
-                        </map>
-                    </constructor-arg>
+                    <constructor-arg name="configs" ref ="kafka-configs-transfer"/>
                 </bean>
             </constructor-arg>
             <constructor-arg name="autoFlush" value="false" />
-            <property name="defaultTopic" value="billing"/>
+            <property name="defaultTopic" value="${pool.kafka.topic}"/>
             <property name="producerListener" ref="listener"/>
         </bean>
+
     </beans>
 
     <beans profile="httpsredirect-false">
@@ -661,10 +674,57 @@
             <property name="crlCheckingMode" value="${pool.authn.crl-mode}"/>
             <property name="ocspCheckingMode" value="${pool.authn.ocsp-mode}"/>
         </bean>
-
-
     </beans>
 
+    <beans profile="inotify-true">
+        <bean id="event-notifier" class="diskCacheV111.namespace.EventNotifier">
+            <description>Service allowing other dCache components to be notified of namespace events</description>
+            <property name="cellStub">
+                <bean class="org.dcache.cells.CellStub">
+                    <property name="timeout" value="10"/>
+                    <property name="timeoutUnit" value="SECONDS"/>
+                </bean>
+            </property>
 
+            <property name="dispatchExecutor">
+                <bean class="org.dcache.util.BoundedCachedExecutor"
+                      destroy-method="shutdownNow">
+                    <constructor-arg value="1"/>  <!-- Only a single thread -->
+                    <constructor-arg value="${pool.inotify-generation.backlog.initial}"/>
+                </bean>
+            </property>
 
+            <property name="senderExecutor">
+                <bean class="java.util.concurrent.Executors"
+                      factory-method="newSingleThreadExecutor"
+                      destroy-method="shutdownNow"/>
+            </property>
+            <property name="eventBatchSize"
+                      value="${pool.inotify-generation.message-batch-size}"/>
+            <property name="maximumQueuedEvents"
+                      value="${pool.inotify-generation.backlog.per-door}"/>
+        </bean>
+
+	<bean id="notification-amplifier"
+	      class="org.dcache.pool.repository.inotify.NotificationAmplifier">
+	    <constructor-arg ref="event-notifier"/>
+	</bean>
+
+	<bean class="org.springframework.beans.factory.config.MethodInvokingFactoryBean">
+	    <property name="targetObject" ref="rep"/>
+	    <property name="targetMethod" value="addListener"/>
+	    <property name="arguments" ref="notification-amplifier"/>
+	</bean>
+
+	<bean id="replica-store"
+	      class="org.dcache.pool.repository.inotify.InotifyReplicaStore">
+	    <constructor-arg ref="checksum-replica-store"/>
+	    <constructor-arg ref="notification-amplifier"/>
+	    <constructor-arg value="#{ T(org.dcache.util.TimeUtils).durationOf('${pool.inotify-generation.io-suppression}', '${pool.inotify-generation.io-suppression.unit}') }"/>
+	</bean>
+    </beans>
+
+    <beans profile="inotify-false">
+        <bean id="replica-store" parent="checksum-replica-store"/>
+    </beans>
 </beans>

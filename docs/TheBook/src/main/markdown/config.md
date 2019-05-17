@@ -3,8 +3,7 @@ Part II. Configuration of dCache
 
 This part contains descriptions of the components of dCache, their role, functionality within the framework. In short, all information necessary for configuring them.
 
-Table of Contents
------------------
+## Table of Contents
 
 1. [ZooKeeper](config-zookeeper.md)
     - [Deployment scenarios](config-zookeeper.md#deployment-scenarios)
@@ -33,7 +32,7 @@ Table of Contents
     - [Resilience's View of Pool Status](config-resilience.md#resilience-s-view-of-pool-status)
     - [Automatic Staging of Missing CUSTODIAL Replicas](config-resilience.md#automatic-staging-of-missing-custoidial-replicas)
     - [Some typical scenarios part 1: what happens when ...?](config-resilience.md#some-typical-scenarios-part-1--what-happens-when-?)
-    - [Some typical scenarios part 2: how do I ...?](config-resilience.md#some-typical-scenarios-part-2--how do i-?)
+    - [Some typical scenarios part 2: how do I ...?](config-resilience.md#some-typical-scenarios-part-2--how-do-i-?)
 
 1. [The poolmanager Service](config-PoolManager.md)
     - [The Pool Selection Mechanism](config-PoolManager.md#the-pool-selection-mechanism)

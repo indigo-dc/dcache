@@ -174,12 +174,6 @@ public class RemoteGsiftpTransferProtocol
     }
 
     @Override
-    public Set<ChecksumType> desiredChecksums(ProtocolInfo info)
-    {
-        return EnumSet.noneOf(ChecksumType.class);
-    }
-
-    @Override
     public void runIO(FileAttributes fileAttributes,
                       RepositoryChannel fileChannel,
                       ProtocolInfo protocol,
@@ -200,6 +194,17 @@ public class RemoteGsiftpTransferProtocol
 
         RemoteGsiftpTransferProtocolInfo remoteGsiftpProtocolInfo
             = (RemoteGsiftpTransferProtocolInfo) protocol;
+
+        fileChannel.optionallyAs(ChecksumChannel.class).ifPresent(c -> {
+                    remoteGsiftpProtocolInfo.getDesiredChecksum().ifPresent(t -> {
+                                try {
+                                    c.addType(t);
+                                } catch (IOException e) {
+                                    _log.warn("Unable to calculate checksum {}: {}",
+                                            t, messageOrClassName(e));
+                                }
+                            });
+                });
 
         createFtpClient(remoteGsiftpProtocolInfo);
 

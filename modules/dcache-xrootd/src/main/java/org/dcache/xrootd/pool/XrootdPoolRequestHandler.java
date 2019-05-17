@@ -54,6 +54,7 @@ import org.dcache.vehicles.XrootdProtocolInfo;
 import org.dcache.xrootd.AbstractXrootdRequestHandler;
 import org.dcache.xrootd.core.XrootdException;
 import org.dcache.xrootd.core.XrootdSessionIdentifier;
+import org.dcache.xrootd.core.XrootdSigverDecoder;
 import org.dcache.xrootd.protocol.XrootdProtocol;
 import org.dcache.xrootd.protocol.messages.AuthenticationRequest;
 import org.dcache.xrootd.protocol.messages.CloseRequest;
@@ -228,7 +229,27 @@ public class XrootdPoolRequestHandler extends AbstractXrootdRequestHandler
     protected XrootdResponse<LoginRequest> doOnLogin(ChannelHandlerContext ctx, LoginRequest msg)
     {
         XrootdSessionIdentifier sessionId = new XrootdSessionIdentifier();
-        return new LoginResponse(msg, sessionId, "");
+        /*
+         * It is only necessary to tell the client to observe the unix protocol
+         * if security is on and signed hashes are being enforced.
+         *
+         * We also need to swap the decoder.
+         */
+        String sec;
+
+        if (signingPolicy.isSigningOn() && signingPolicy.isForceSigning()) {
+            sec = "&P=unix";
+            ctx.pipeline().addAfter("decoder",
+                                        "sigverDecoder",
+                                        new XrootdSigverDecoder(signingPolicy,
+                                                                null));
+            ctx.pipeline().remove("decoder");
+            _log.debug("swapped decoder for sigverDecoder.");
+        } else {
+            sec = "";
+        }
+
+        return new LoginResponse(msg, sessionId, sec);
     }
 
     @Override
@@ -288,7 +309,7 @@ public class XrootdPoolRequestHandler extends AbstractXrootdRequestHandler
                                     file.getProtocolInfo().getFlags()
                                         .contains(XrootdProtocolInfo.Flags.POSC);
                     if (opaqueMap.containsKey("tpc.src")) {
-                        _log.trace("Request to open {} is as third-party destination.", msg);
+                        _log.debug("Request to open {} is as third-party destination.", msg);
                         descriptor = new TpcWriteDescriptor(file, posc, ctx,
                                                             _server,
                                                             opaqueMap.get("org.dcache.xrootd.client"),
@@ -369,7 +390,7 @@ public class XrootdPoolRequestHandler extends AbstractXrootdRequestHandler
     {
         switch (msg.getTarget()) {
         case PATH:
-            _log.trace("Request to stat {}; redirecting to door.", msg);
+            _log.debug("Request to stat {}; redirecting to door.", msg);
             return redirectToDoor(ctx, msg);
 
         case FHANDLE:
@@ -384,11 +405,11 @@ public class XrootdPoolRequestHandler extends AbstractXrootdRequestHandler
 
             FileDescriptor descriptor = _descriptors.get(fd);
             if (descriptor instanceof TpcWriteDescriptor) {
-                _log.trace("Request to stat {} is for third-party transfer.", msg);
+                _log.debug("Request to stat {} is for third-party transfer.", msg);
                 return ((TpcWriteDescriptor)descriptor).handleStat(msg);
             } else {
                 try {
-                    _log.trace("Request to stat open file fhandle={}", fd);
+                    _log.debug("Request to stat open file fhandle={}", fd);
                     return new StatResponse(msg, stat(descriptor.getChannel()));
                 } catch (IOException e) {
                     throw new XrootdException(kXR_IOError, e.getMessage());

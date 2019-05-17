@@ -30,6 +30,7 @@ import org.dcache.pool.repository.ReplicaDescriptor;
 import org.dcache.pool.repository.RepositoryChannel;
 import org.dcache.pool.repository.StickyRecord;
 import org.dcache.pool.repository.checksums.ChecksumReplicaRecord;
+import org.dcache.pool.repository.inotify.InotifyReplicaRecord;
 import org.dcache.pool.statistics.IoStatisticsReplicaRecord;
 import org.dcache.util.Checksum;
 import org.dcache.vehicles.FileAttributes;
@@ -53,6 +54,11 @@ class WriteHandleImpl implements ReplicaDescriptor
             .addAll(FileStore.O_RW)
             .add(IoStatisticsReplicaRecord.OpenFlags.ENABLE_IO_STATISTICS)
             .add(ChecksumReplicaRecord.OpenFlags.ENABLE_CHECKSUM_CALCULATION)
+            .build();
+
+    private static final Set<OpenOption> OPEN_OPTIONS_WITH_INOTIFY = ImmutableSet.<OpenOption>builder()
+            .addAll(OPEN_OPTIONS)
+            .add(InotifyReplicaRecord.OpenFlags.ENABLE_INOTIFY_MONITORING)
             .build();
 
     /**
@@ -91,6 +97,8 @@ class WriteHandleImpl implements ReplicaDescriptor
     /** Last access time of new replica. */
     private Long _atime;
 
+    private boolean hasChannelBeenCreated;
+
     WriteHandleImpl(ReplicaRepository repository,
                     Allocator allocator,
                     PnfsHandler pnfs,
@@ -118,6 +126,18 @@ class WriteHandleImpl implements ReplicaDescriptor
         _state = state;
     }
 
+    /**
+     * Whether a createChannel request is intended for direct client IO.
+     */
+    private boolean isChannelForClient()
+    {
+        // The createChannel method may be called multiple times; for example,
+        // the onWrite behaviour within ChecksumModuleV1#enforcePostTransferPolicy.
+        // We use the heuristic that the first createChannel is to accept client data
+        // and any subsequent channels are for dCache-internal activity.
+        return _initialState == ReplicaState.FROM_CLIENT && !hasChannelBeenCreated;
+    }
+
     @Override
     public synchronized RepositoryChannel createChannel() throws IOException {
 
@@ -125,12 +145,17 @@ class WriteHandleImpl implements ReplicaDescriptor
             throw new IllegalStateException("Handle is closed");
         }
 
-        return new AllocatorAwareRepositoryChannel(_entry.openChannel(OPEN_OPTIONS),
+        Set<OpenOption> options = isChannelForClient()
+                ? OPEN_OPTIONS_WITH_INOTIFY
+                : OPEN_OPTIONS;
+
+        RepositoryChannel channel = new AllocatorAwareRepositoryChannel(_entry.openChannel(options),
                 _allocator);
+        hasChannelBeenCreated = true;
+        return channel;
     }
 
-    private void registerFileAttributesInNameSpace()
-            throws CacheException
+    private void registerFileAttributesInNameSpace() throws CacheException
     {
         FileAttributes attributesToUpdate = FileAttributes.ofLocation(_repository.getPoolName());
         if (_fileAttributes.isDefined(CHECKSUM)) {
@@ -140,7 +165,7 @@ class WriteHandleImpl implements ReplicaDescriptor
         if (_initialState == ReplicaState.FROM_CLIENT) {
             attributesToUpdate.setAccessLatency(_fileAttributes.getAccessLatency());
             attributesToUpdate.setRetentionPolicy(_fileAttributes.getRetentionPolicy());
-            if (_fileAttributes.isDefined(SIZE) && _fileAttributes.getSize() > 0) {
+            if (_fileAttributes.isDefined(SIZE)) {
                 attributesToUpdate.setSize(_fileAttributes.getSize());
             }
         }
@@ -191,7 +216,7 @@ class WriteHandleImpl implements ReplicaDescriptor
                 }
             } while (!namespaceUpdated);
 
-            _entry.update(r -> {
+            _entry.update("Committing new file", r -> {
                 r.setFileAttributes(_fileAttributes);
                 /* In several situations, dCache requests a CACHED file
                  * without having any sticky flags on it. Such files are
@@ -232,13 +257,14 @@ class WriteHandleImpl implements ReplicaDescriptor
      */
     private synchronized void fail()
     {
-
+        String why = null;
         /* Files from tape or from another pool are deleted in case of
          * errors.
          */
         if (_initialState == ReplicaState.FROM_POOL ||
             _initialState == ReplicaState.FROM_STORE) {
             _targetState = ReplicaState.REMOVED;
+            why = "replica is " + _initialState;
         }
 
         /* If nothing was uploaded, we delete the replica and leave the name space
@@ -247,6 +273,21 @@ class WriteHandleImpl implements ReplicaDescriptor
         long length = _entry.getReplicaSize();
         if (length == 0) {
             _targetState = ReplicaState.REMOVED;
+            if (why == null) {
+                why = "replica is empty";
+            }
+        } else {
+            /* ... otherwise, if the transfer was a client upload then we
+             * register the file's actual size, which will update the
+             * namespace value and trigger that the namespace marks the file
+             * as having state STORED.
+             *
+             * Note that this may override a previous value in the namespace,
+             * if the client provided an expected file size.
+             */
+            if (_initialState == ReplicaState.FROM_CLIENT) {
+                _fileAttributes.setSize(length);
+            }
         }
 
         /* Unless replica is to be removed, register cache location and
@@ -264,6 +305,7 @@ class WriteHandleImpl implements ReplicaDescriptor
             } catch (CacheException e) {
                 if (e.getRc() == CacheException.FILE_NOT_FOUND) {
                     _targetState = ReplicaState.REMOVED;
+                    why = "file no longer exists in namespace";
                 } else {
                     _log.warn("Failed to register {} after failed replica creation: {}",
                             _fileAttributes, e.getMessage());
@@ -273,7 +315,8 @@ class WriteHandleImpl implements ReplicaDescriptor
 
         if (_targetState == ReplicaState.REMOVED) {
             try {
-                _entry.update(r -> r.setState(ReplicaState.REMOVED));
+                String reason = why == null ? "Transfer failed" : "Transfer failed and " + why;
+                _entry.update(reason, r -> r.setState(ReplicaState.REMOVED));
             } catch (CacheException e) {
                 _log.warn("Failed to remove replica: {}", e.getMessage());
             }
@@ -286,7 +329,8 @@ class WriteHandleImpl implements ReplicaDescriptor
                       _entry.getPnfsId(),
                       _repository.getPoolName());
             try {
-                _entry.update(r -> r.setState(ReplicaState.BROKEN));
+                _entry.update("Transfer failed for " + _initialState + " replica",
+                        r -> r.setState(ReplicaState.BROKEN));
             } catch (CacheException e) {
                 _log.warn("Failed to mark replica as broken: {}", e.getMessage());
             }

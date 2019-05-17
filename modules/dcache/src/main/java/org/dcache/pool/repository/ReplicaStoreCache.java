@@ -117,7 +117,7 @@ public class ReplicaStoreCache
                 }
                 CacheEntry entry = new CacheEntryImpl(_record);
                 _stateChangeListener.stateChanged(
-                        new StateChangeEvent(entry, entry, NEW, _record.getState()));
+                        new StateChangeEvent("loading CacheEntry", entry, entry, NEW, _record.getState()));
             }
             return this;
         }
@@ -142,16 +142,16 @@ public class ReplicaStoreCache
         }
 
         @GuardedBy("this")
-        private void destroy()
+        private void destroy(String why)
         {
             assert _entries.get(_id) == this;
             try {
                 CacheEntry entry = new CacheEntryImpl(_record);
-                _record.update(r -> r.setState(DESTROYED));
+                _record.update(why, r -> r.setState(DESTROYED));
                 _inner.remove(_id);
                 _entries.remove(_id);
                 _stateChangeListener.stateChanged(
-                        new StateChangeEvent(entry, entry, entry.getState(), DESTROYED));
+                        new StateChangeEvent(why, entry, entry, entry.getState(), DESTROYED));
             } catch (DiskErrorCacheException | RuntimeException e) {
                 _faultListener.faultOccurred(
                         new FaultEvent("repository", FaultAction.DEAD, "Internal repository error", e));
@@ -269,7 +269,7 @@ public class ReplicaStoreCache
         {
             int cnt = _record.decrementLinkCount();
             if (cnt == 0 && _record.getState() == ReplicaState.REMOVED) {
-                destroy();
+                destroy("REMOVED replica no longer being used");
             }
             return cnt;
         }
@@ -318,7 +318,7 @@ public class ReplicaStoreCache
                 Collection<StickyRecord> removed = _record.removeExpiredStickyFlags();
                 if (!removed.isEmpty()) {
                     CacheEntryImpl newEntry = new CacheEntryImpl(_record);
-                    _stateChangeListener.stickyChanged(new StickyChangeEvent(oldEntry, newEntry));
+                    _stateChangeListener.stickyChanged(new StickyChangeEvent("sticky has expired", oldEntry, newEntry));
                 }
                 return removed;
             } catch (RuntimeException | DiskErrorCacheException e) {
@@ -341,10 +341,10 @@ public class ReplicaStoreCache
         }
 
         @Override
-        public synchronized <T> T update(Update<T> update) throws CacheException
+        public synchronized <T> T update(String why, Update<T> update) throws CacheException
         {
             try {
-                T result = _record.update(
+                T result = _record.update(why,
                         r -> update.apply(
                                 new UpdatableRecord()
                                 {
@@ -357,7 +357,7 @@ public class ReplicaStoreCache
                                         if (changed) {
                                             CacheEntryImpl newEntry = new CacheEntryImpl(_record);
                                             _stateChangeListener.stickyChanged(
-                                                    new StickyChangeEvent(oldEntry, newEntry));
+                                                    new StickyChangeEvent(why, oldEntry, newEntry));
                                         }
                                         return changed;
                                     }
@@ -370,7 +370,7 @@ public class ReplicaStoreCache
                                             r.setState(state);
                                             CacheEntry newEntry = new CacheEntryImpl(_record);
                                             _stateChangeListener.stateChanged(
-                                                    new StateChangeEvent(oldEntry, newEntry, oldEntry.getState(),
+                                                    new StateChangeEvent(why, oldEntry, newEntry, oldEntry.getState(),
                                                                          newEntry.getState()));
                                         }
                                         return null;
@@ -401,7 +401,7 @@ public class ReplicaStoreCache
                                     }
                                 }));
                 if (_record.getLinkCount() == 0 && _record.getState() == ReplicaState.REMOVED) {
-                    destroy();
+                    destroy("Idle replica marked REMOVED");
                 }
                 return result;
             } catch (IllegalArgumentException | IllegalStateException e) {

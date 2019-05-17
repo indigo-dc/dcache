@@ -20,6 +20,7 @@ import java.util.OptionalLong;
 import java.util.concurrent.Executor;
 
 import diskCacheV111.util.CacheException;
+import diskCacheV111.util.FileIsNewCacheException;
 import diskCacheV111.util.PnfsId;
 import diskCacheV111.vehicles.DoorRequestInfoMessage;
 import diskCacheV111.vehicles.DoorTransferFinishedMessage;
@@ -65,6 +66,10 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
 {
     private static final Logger log =
             LoggerFactory.getLogger(TransferManagerHandler.class);
+
+    private static final int MAXIMUM_POOL_SELECTION_ATTEMPTS = 10;
+    private static final int MAXIMUM_MOVER_START_ATTEMPTS = 10;
+
     private final TransferManager manager;
     private final TransferManagerMessage transferRequest;
     private final CellPath requestor;
@@ -130,6 +135,8 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
     private long lifeTime;
     private Long credentialId;
     private transient int numberOfRetries;
+    private transient int numberOfPoolSelectionRetries;
+    private transient int numberOfMoverStartRetries;
     private transient int _replyCode;
     private transient Serializable _errorObject;
     private transient boolean _cancelTimer;
@@ -217,6 +224,7 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
             EnumSet<FileAttribute> attributes = EnumSet.noneOf(FileAttribute.class);
             attributes.addAll(permissionHandler.getRequiredAttributes());
             attributes.addAll(PoolMgrSelectReadPoolMsg.getRequiredAttributes());
+            attributes.add(SIZE); // to determine if file is currently being uploaded
             message = pnfsId == null ? new PnfsGetFileAttributes(pnfsPath, attributes)
                     : new PnfsGetFileAttributes(pnfsId, attributes);
             message.setSubject(transferRequest.getSubject());
@@ -232,6 +240,7 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
     @Override
     public void success(Message message)
     {
+        try {
             if (message instanceof PnfsCreateEntryMessage) {
                 PnfsCreateEntryMessage create_msg =
                         (PnfsCreateEntryMessage) message;
@@ -290,7 +299,11 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
                     sendErrorReply();
                 }
             }
-        manager.persist(this);
+            manager.persist(this);
+        } catch (RuntimeException e) {
+            log.error("Bug detected in transfermanager, please report this to <support@dCache.org>", e);
+            failure(1, "Bug detected: " + e);
+        }
     }
 
     @Override
@@ -310,13 +323,50 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
             break;
 
         case WAITING_FIRST_POOL_REPLY_STATE:
-            // FIXME: in the case of an attempted read (pool pushing the file
-            //        to some remote site), we can ask PoolManager for another
-            //        pool.  For an attempted write (pool pulling the file)
-            //        we must fail the transfer as we don't know if a mover
-            //        was started.
-            sendErrorReply(CacheException.SELECTED_POOL_FAILED,
-                    "Failed while waiting for mover to start: " + error);
+            switch (rc) {
+            case CacheException.OUT_OF_DATE:
+            case CacheException.POOL_DISABLED:
+            case CacheException.FILE_NOT_IN_REPOSITORY:
+            case CacheException.CANNOT_CREATE_MOVER:
+                log.debug("Pool {} reported rc={}; retrying pool selection",
+                        pool.getAddress(), rc);
+                retryPoolSelection(rc, error);
+                break;
+
+            case CacheException.TIMEOUT:
+                if (store) {
+                    /* We don't know if a mover was actually started; therefore,
+                     * we must fail the request.
+                     */
+                    sendErrorReply(CacheException.SELECTED_POOL_FAILED,
+                            "Timeout waiting for transfer to start on "
+                            + pool.getAddress());
+                    break;
+                }
+
+                // FALL THROUGH
+
+            default:
+                if (numberOfMoverStartRetries++ < MAXIMUM_MOVER_START_ATTEMPTS) {
+                    log.debug("Pool {} reported rc={}; scheduling another attempt to start mover",
+                            pool.getAddress(), rc);
+                    executor.execute(() -> {
+                                try {
+                                    Thread.sleep(1_000);
+                                    startMoverOnThePool();
+                                } catch (InterruptedException e) {
+                                    sendErrorReply(rc, "Interrupted while waiting"
+                                            + " to resend start mover on "
+                                            + pool.getAddress());
+                                }
+                            });
+                } else {
+                    log.debug("Too many attempts to start mover on pool {},"
+                            + " retrying pool selection", pool.getAddress());
+                    retryPoolSelection(rc, error);
+                }
+                break;
+            }
             break;
 
         case WAITING_FOR_PNFS_CHECK_BEFORE_DELETE_STATE:
@@ -348,6 +398,17 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
             sendErrorReply(rc, "Failed in state " + state + ": " + error +
                     " [" + rc + "]");
             break;
+        }
+    }
+
+    private void retryPoolSelection(int rc, Object error)
+    {
+        if (numberOfPoolSelectionRetries++ < MAXIMUM_POOL_SELECTION_ATTEMPTS) {
+            numberOfMoverStartRetries = 0;
+            selectPool();
+        } else {
+            sendErrorReply(rc, "Too many attempts to select pool; last pool "
+                    + pool.getAddress() + " failed with " + error);
         }
     }
 
@@ -383,6 +444,11 @@ public class TransferManagerHandler extends AbstractMessageCallback<Message>
 
     public void storageInfoArrived(PnfsGetFileAttributes msg)
     {
+        if (!msg.getFileAttributes().isDefined(SIZE)) {
+            sendErrorReply(CacheException.FILE_IS_NEW, new FileIsNewCacheException());
+            return;
+        }
+
         //
         // Added by litvinse@fnal.gov
         //

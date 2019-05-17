@@ -1184,9 +1184,14 @@ public class DCapDoorInterpreterV3
                     return;
                 }
 
+                InetSocketAddress addr = new InetSocketAddress(_destination, 0);
+                if (addr.isUnresolved()) {
+                    _log.info("prestage request with unknown location: {}",
+                            _destination);
+                }
+
                 DCapProtocolInfo protocolInfo =
-                    new DCapProtocolInfo("DCap", 3, 0,
-                        new InetSocketAddress(_destination, 0));
+                        new DCapProtocolInfo("DCap", 3, 0, addr);
                 PinManagerPinMessage message =
                     new PinManagerPinMessage(_fileAttributes, protocolInfo,
                                              null, 0);
@@ -2573,7 +2578,7 @@ public class DCapDoorInterpreterV3
 
     private void sendAsynctoKafka(DoorRequestInfoMessage info) {
 
-        ProducerRecord<String, DoorRequestInfoMessage> record = new ProducerRecord<String, DoorRequestInfoMessage>("billing", info);
+        ProducerRecord<String, DoorRequestInfoMessage> record = new ProducerRecord<String, DoorRequestInfoMessage>(_settings.getKafkaTopic(), info);
         _kafkaProducer.send(record, (rm, e) -> {
             if (e != null) {
                 _log.error("Unable to send message to topic {} on  partition {}: {}",

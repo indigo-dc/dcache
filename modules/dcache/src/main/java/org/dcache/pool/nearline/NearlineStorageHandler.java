@@ -113,13 +113,13 @@ import org.dcache.pool.repository.IllegalTransitionException;
 import org.dcache.pool.repository.ReplicaDescriptor;
 import org.dcache.pool.repository.ReplicaState;
 import org.dcache.pool.repository.Repository;
+import org.dcache.pool.repository.Repository.OpenFlags;
 import org.dcache.pool.repository.StateChangeEvent;
 import org.dcache.pool.repository.StateChangeListener;
 import org.dcache.pool.repository.StickyChangeEvent;
 import org.dcache.util.CacheExceptionFactory;
 import org.dcache.util.Checksum;
 import org.dcache.vehicles.FileAttributes;
-
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -842,7 +842,7 @@ public class NearlineStorageHandler
         public FlushRequestImpl(NearlineStorage nearlineStorage, PnfsId pnfsId) throws CacheException, InterruptedException
         {
             super(nearlineStorage);
-            descriptor = repository.openEntry(pnfsId, NO_FLAGS);
+            descriptor = repository.openEntry(pnfsId, EnumSet.of(OpenFlags.NOATIME));
             infoMsg = new StorageInfoMessage(cellAddress, pnfsId, false);
             infoMsg.setStorageInfo(descriptor.getFileAttributes().getStorageInfo());
             String path = descriptor.getFileAttributes().getStorageInfo().getKey("path");
@@ -930,7 +930,8 @@ public class NearlineStorageHandler
                 notifyNamespace(pnfsId, fileAttributesForNotification);
 
                 try {
-                    repository.setState(pnfsId, ReplicaState.CACHED);
+                    repository.setState(pnfsId, ReplicaState.CACHED,
+                            "file sucessfully flushed");
                 } catch (IllegalTransitionException ignored) {
                     /* Apparently the file is no longer precious. Most
                      * likely it got deleted, which is fine, since the
@@ -1042,7 +1043,8 @@ public class NearlineStorageHandler
         private void removeFile(PnfsId pnfsId)
         {
             try {
-                repository.setState(pnfsId, ReplicaState.REMOVED);
+                repository.setState(pnfsId, ReplicaState.REMOVED,
+                        "file deleted before being flushed");
             } catch (IllegalTransitionException f) {
                 LOGGER.warn("File not found in name space, but failed to remove {}: {}",
                             pnfsId, f.getMessage());

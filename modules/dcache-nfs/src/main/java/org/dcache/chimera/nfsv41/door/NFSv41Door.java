@@ -131,6 +131,7 @@ import org.dcache.nfs.v4.NfsV41FileLayoutDriver;
 import org.dcache.nfs.v4.xdr.length4;
 import org.dcache.nfs.v4.ff.ff_ioerr4;
 import org.dcache.nfs.v4.ff.ff_layoutreturn4;
+import org.dcache.nfs.v4.ff.flex_files_prot;
 import org.dcache.nfs.v4.xdr.device_error4;
 import org.dcache.nfs.v4.xdr.nfs_opnum4;
 import org.dcache.nfs.v4.xdr.offset4;
@@ -427,7 +428,9 @@ public class NFSv41Door extends AbstractCellComponent implements
         // Supported layout drivers
         _supportedDrivers = new EnumMap<>(layouttype4.class);
         _supportedDrivers.put(layouttype4.LAYOUT4_FLEX_FILES,
-                new FlexFileLayoutDriver(4, 1, new utf8str_mixed("17"), new utf8str_mixed("17"), this::logLayoutErrors));
+                new FlexFileLayoutDriver(4, 1,
+                        flex_files_prot.FF_FLAGS_NO_IO_THRU_MDS,
+                        new utf8str_mixed("17"), new utf8str_mixed("17"), this::logLayoutErrors));
         _supportedDrivers.put(layouttype4.LAYOUT4_NFSV4_1_FILES, new NfsV41FileLayoutDriver());
 
         _rpcService = oncRpcSvcBuilder.build();
@@ -563,16 +566,17 @@ public class NFSv41Door extends AbstractCellComponent implements
         }
 
         // limit addresses returned to client to the same 'type' as clients own address
+        // NOTICE: according to rfc1918 we allow access to private networks from public ip address
+        // Site must take care that private IP space is not visible to site external clients.
         InetAddress clientAddress = context.getRemoteSocketAddress().getAddress();
         InetSocketAddress[] usableAddresses = Stream.of(ds.getDeviceAddr())
                 .filter(a -> !a.getAddress().isLoopbackAddress() || clientAddress.isLoopbackAddress())
                 .filter(a -> !a.getAddress().isLinkLocalAddress() || clientAddress.isLinkLocalAddress())
-                .filter(a -> !a.getAddress().isSiteLocalAddress() || clientAddress.isSiteLocalAddress())
                 // due to bug in linux kernel we need to filter out IPv6 addresses if client connected
                 // with IPv4.
                 // REVISIT: remove this workaround as soon as RHEL 7.5 is released.
                 .filter(a -> clientAddress.getAddress().length >= a.getAddress().getAddress().length)
-                .toArray(size -> new InetSocketAddress[size]);
+                .toArray(InetSocketAddress[]::new);
 
         return layoutDriver.getDeviceAddress(usableAddresses);
     }
@@ -593,7 +597,7 @@ public class NFSv41Door extends AbstractCellComponent implements
         LayoutDriver layoutDriver = getLayoutDriver(layoutType);
 
         NFS4Client client = null;
-        try {
+        try(CDC ignored = CDC.reset(getCellName(), getCellDomainName())) {
 
             FsInode inode = _chimeraVfs.inodeFromBytes(nfsInode.getFileId());
             PnfsId pnfsId = new PnfsId(inode.getId());
@@ -703,10 +707,6 @@ public class NFSv41Door extends AbstractCellComponent implements
             throw asNfsException(e, LayoutTryLaterException.class);
         } catch (InterruptedException e) {
             throw new LayoutTryLaterException(e.getMessage(), e);
-        } finally {
-            CDC.clearMessageContext();
-            NDC.pop();
-            NDC.pop();
         }
 
     }

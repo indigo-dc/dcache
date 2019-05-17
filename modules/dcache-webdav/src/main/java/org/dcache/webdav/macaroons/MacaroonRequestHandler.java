@@ -75,8 +75,7 @@ import org.dcache.http.PathMapper;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Strings.emptyToNull;
 import static java.lang.Boolean.TRUE;
-import static javax.servlet.http.HttpServletResponse.SC_BAD_REQUEST;
-import static javax.servlet.http.HttpServletResponse.SC_INTERNAL_SERVER_ERROR;
+import static javax.servlet.http.HttpServletResponse.*;
 import static org.dcache.macaroons.CaveatType.BEFORE;
 import static org.dcache.macaroons.InvalidCaveatException.checkCaveat;
 
@@ -184,10 +183,7 @@ public class MacaroonRequestHandler extends AbstractHandler implements CellIdent
                     w.println(json.toString(JSON_RESPONSE_INDENTATION));
                 }
             } catch (ErrorResponseException e) {
-                response.setStatus(e.getStatus());
-                try (PrintWriter w = response.getWriter()) {
-                    w.println(e.getMessage());
-                }
+                response.sendError(e.getStatus(), e.getMessage());
             } catch (RuntimeException e) {
                 LOG.error("Bug detected", e);
                 response.setStatus(HttpServletResponse.SC_INTERNAL_SERVER_ERROR);
@@ -301,14 +297,20 @@ public class MacaroonRequestHandler extends AbstractHandler implements CellIdent
         context.setUsername(Subjects.getUserName(subject));
         context.setRoot(_pathMapper.effectiveRoot(userRoot, m -> new ErrorResponseException(SC_BAD_REQUEST, m)));
 
+        if (!target.equals("/") && !context.getPath().isPresent()) {
+            context.setPath(_pathMapper.asDcachePath(request, target));
+        }
+
         return context;
     }
 
 
     private String buildMacaroon(String target, Request request) throws ErrorResponseException
     {
-        checkValidRequest(request.isSecure(), "Not secure transport.");
-        checkValidRequest(!Subjects.isNobody(getSubject()), "User not authenticated.");
+        checkValidRequest(request.isSecure(), "Not secure transport");
+        if (Subjects.isNobody(getSubject())) {
+            throw new ErrorResponseException(SC_UNAUTHORIZED, "Authentication required");
+        }
 
         MacaroonContext context = buildContext(target, request);
 
@@ -330,9 +332,9 @@ public class MacaroonRequestHandler extends AbstractHandler implements CellIdent
 
             Instant expiry = calculateExpiry(context, beforeCaveats);
 
-            String macaroon = _processor.buildMacaroon(expiry, context, caveats);
-            request.setAttribute(MACAROON_ID_ATTRIBUTE, MacaroonProcessor.idOfMacaroon(macaroon));
-            return macaroon;
+            MacaroonProcessor.MacaroonBuildResult result = _processor.buildMacaroon(expiry, context, caveats);
+            request.setAttribute(MACAROON_ID_ATTRIBUTE, result.getId());
+            return result.getMacaroon();
         } catch (DateTimeParseException e) {
             throw new ErrorResponseException(SC_BAD_REQUEST, "Bad validity value: " + e.getMessage());
         } catch (InvalidCaveatException e) {

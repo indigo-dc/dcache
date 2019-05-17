@@ -30,9 +30,11 @@ import java.nio.file.OpenOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -212,12 +214,6 @@ public class RemoteHttpDataTransferProtocol implements MoverProtocol,
     }
 
     @Override
-    public Set<ChecksumType> desiredChecksums(ProtocolInfo info)
-    {
-        return EnumSet.noneOf(ChecksumType.class);
-    }
-
-    @Override
     public void runIO(FileAttributes attributes, RepositoryChannel channel,
             ProtocolInfo genericInfo, Set<? extends OpenOption> access)
             throws CacheException, IOException, InterruptedException
@@ -227,6 +223,17 @@ public class RemoteHttpDataTransferProtocol implements MoverProtocol,
         RemoteHttpDataTransferProtocolInfo info =
                 (RemoteHttpDataTransferProtocolInfo) genericInfo;
         _channel = new MoverChannel<>(access, attributes, info, channel);
+
+        channel.optionallyAs(ChecksumChannel.class).ifPresent(c -> {
+                    info.getDesiredChecksum().ifPresent(t -> {
+                                try {
+                                    c.addType(t);
+                                } catch (IOException e) {
+                                    _log.warn("Unable to calculate checksum {}: {}",
+                                            t, messageOrClassName(e));
+                                }
+                            });
+                });
 
         _client = createHttpClient();
         try {
@@ -265,6 +272,11 @@ public class RemoteHttpDataTransferProtocol implements MoverProtocol,
                 HttpEntity entity = response.getEntity();
                 if (entity == null) {
                     throw new ThirdPartyTransferFailedCacheException("GET response contains no content");
+                }
+
+                long length = entity.getContentLength();
+                if (length > 0) {
+                    _channel.truncate(length);
                 }
                 entity.writeTo(Channels.newOutputStream(_channel));
             } catch (SocketTimeoutException e) {
@@ -372,6 +384,8 @@ public class RemoteHttpDataTransferProtocol implements MoverProtocol,
                     switch (status.getStatusCode()) {
                     case 200: /* OK (not actually a valid response from PUT) */
                     case 201: /* Created */
+                    case 204: /* No Content */
+                    case 205: /* Reset Content */
                         return;
 
                     case 300: /* Multiple Choice */
@@ -503,8 +517,10 @@ public class RemoteHttpDataTransferProtocol implements MoverProtocol,
                         StatusLine status = response.getStatusLine();
 
                         if (status.getStatusCode() >= 300) {
-                            throw new ThirdPartyTransferFailedCacheException("rejected HEAD: "
-                                    + status.getStatusCode() + " " + status.getReasonPhrase());
+                            checkThirdPartyTransferSuccessful(!info.isVerificationRequired(),
+                                    "rejected HEAD: %d %s", status.getStatusCode(),
+                                    status.getReasonPhrase());
+                            return;
                         }
 
                         if (shouldRetry(response)) {
@@ -557,7 +573,13 @@ public class RemoteHttpDataTransferProtocol implements MoverProtocol,
     private HttpHead buildHeadRequest(RemoteHttpDataTransferProtocolInfo info)
     {
         HttpHead head = new HttpHead(info.getUri());
-        head.addHeader("Want-Digest", WANT_DIGEST_VALUE);
+
+        _channel.getFileAttributes().getChecksumsIfPresent()
+                .map(v -> Checksums.asWantDigest(v))
+                .filter(Optional::isPresent)
+                .map(Optional::get)
+                .ifPresent(v -> head.addHeader("Want-Digest", v));
+
         head.setConfig(RequestConfig.custom()
                                   .setConnectTimeout(CONNECTION_TIMEOUT)
                                   .setSocketTimeout(SOCKET_TIMEOUT)

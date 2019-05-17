@@ -4,7 +4,7 @@
   <parent>
     <groupId>org.dcache</groupId>
     <artifactId>dcache-parent</artifactId>
-    <version>5.1.0-SNAPSHOT</version>
+    <version>5.1.2-SNAPSHOT</version>
   </parent>
 
   <artifactId>packaging</artifactId>
@@ -81,6 +81,10 @@
     <dependency>
         <groupId>org.dcache</groupId>
         <artifactId>xrootd4j-gsi</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.dcache</groupId>
+      <artifactId>xrootd4j-unix</artifactId>
     </dependency>
     <dependency>
         <groupId>org.dcache</groupId>
@@ -167,6 +171,11 @@
         <version>${project.version}</version>
     </dependency>
     <dependency>
+        <groupId>org.dcache</groupId>
+        <artifactId>gplazma2-scitoken</artifactId>
+        <version>${project.version}</version>
+    </dependency>
+    <dependency>
       <groupId>org.dcache</groupId>
       <artifactId>gplazma2-htpasswd</artifactId>
       <version>${project.version}</version>
@@ -195,7 +204,6 @@
   </dependencies>
 
   <modules>
-    <module>docker</module>
     <module>fhs</module>
     <module>tar</module>
     <module>system-test</module>

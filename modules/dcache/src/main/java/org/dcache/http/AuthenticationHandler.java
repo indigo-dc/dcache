@@ -82,6 +82,7 @@ public class AuthenticationHandler extends HandlerWrapper {
     private boolean _isBasicAuthenticationEnabled;
     private boolean _isSpnegoAuthenticationEnabled;
     private LoginStrategy _loginStrategy;
+    private boolean _acceptBearerTokenUnencrypted;
 
     private CertificateFactory _cf = CertificateFactories.newX509CertificateFactory();
 
@@ -210,10 +211,13 @@ public class AuthenticationHandler extends HandlerWrapper {
         }
     }
 
-    private void addQueryBearerTokenToSubject(HttpServletRequest request, Subject subject)
+    private void addQueryBearerTokenToSubject(HttpServletRequest request, Subject subject) throws PermissionDeniedCacheException
     {
         String[] bearerTokens = request.getParameterMap().get(BEARER_TOKEN_QUERY_KEY);
         if (bearerTokens != null) {
+            if (!_acceptBearerTokenUnencrypted && !request.isSecure()) {
+                throw new PermissionDeniedCacheException("not allowed to send pre-authorized URL unencrypted");
+            }
             Set<Object> credentials = subject.getPrivateCredentials();
             Arrays.stream(bearerTokens)
                     .map(BearerTokenCredential::new)
@@ -261,16 +265,16 @@ public class AuthenticationHandler extends HandlerWrapper {
 
 
 
-    private void addAuthCredentialsToSubject(HttpServletRequest request, Subject subject) {
-        if (!_isBasicAuthenticationEnabled) {
-            return;
-        }
-
+    private void addAuthCredentialsToSubject(HttpServletRequest request, Subject subject) throws PermissionDeniedCacheException {
         Optional<AuthInfo> optional = parseAuthenticationHeader(request);
         if (optional.isPresent()) {
             AuthInfo info = optional.get();
             switch (info.getScheme()) {
                 case HttpServletRequest.BASIC_AUTH:
+                    if (!_isBasicAuthenticationEnabled) {
+                        return;
+                    }
+
                     try {
                         byte[] bytes = Base64.getDecoder().decode(info.getData().getBytes(StandardCharsets.US_ASCII));
                         String credential = new String(bytes, StandardCharsets.UTF_8);
@@ -297,6 +301,10 @@ public class AuthenticationHandler extends HandlerWrapper {
                     }
                     break;
                 case "BEARER":
+                    if (!_acceptBearerTokenUnencrypted && !request.isSecure()) {
+                        throw new PermissionDeniedCacheException("not allowed to send bearer token unencrypted");
+                    }
+
                     try {
                         subject.getPrivateCredentials().add(new BearerTokenCredential(info.getData()));
                     } catch (IllegalArgumentException e) {
@@ -338,6 +346,10 @@ public class AuthenticationHandler extends HandlerWrapper {
 
     public void setLoginStrategy(LoginStrategy loginStrategy) {
         _loginStrategy = loginStrategy;
+    }
+
+    public void setAcceptBearerTokenUnencrypted(boolean value) {
+        _acceptBearerTokenUnencrypted = value;
     }
 
     private class AuthHandlerResponse extends HttpServletResponseWrapper {

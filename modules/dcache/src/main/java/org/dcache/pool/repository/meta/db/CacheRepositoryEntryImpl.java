@@ -3,10 +3,8 @@ package org.dcache.pool.repository.meta.db;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import com.sleepycat.collections.TransactionWorker;
 import com.sleepycat.je.EnvironmentFailureException;
 import com.sleepycat.je.OperationFailureException;
-import com.sleepycat.je.Transaction;
 import com.sleepycat.util.RuntimeExceptionWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,6 +50,7 @@ public class CacheRepositoryEntryImpl implements ReplicaRecord
 
     private final PnfsId _pnfsId;
     private final AbstractBerkeleyDBReplicaStore _repository;
+    private final long _creationTime;
 
     /**
      * Sticky records held by the file.
@@ -59,8 +58,6 @@ public class CacheRepositoryEntryImpl implements ReplicaRecord
     private ImmutableList<StickyRecord> _sticky;
 
     private ReplicaState _state;
-
-    private long _creationTime = System.currentTimeMillis();
 
     private long _lastAccess;
 
@@ -74,6 +71,7 @@ public class CacheRepositoryEntryImpl implements ReplicaRecord
         _pnfsId = pnfsId;
         _state = NEW;
         _sticky = ImmutableList.of();
+        _creationTime =   System.currentTimeMillis();
         _lastAccess = _creationTime;
     }
 
@@ -85,6 +83,7 @@ public class CacheRepositoryEntryImpl implements ReplicaRecord
         _state = state;
         setStickyRecords(sticky);
         _lastAccess = attributes.lastModifiedTime().toMillis();
+        _creationTime = attributes.creationTime().toMillis();
         _size = attributes.size();
     }
 
@@ -118,11 +117,6 @@ public class CacheRepositoryEntryImpl implements ReplicaRecord
     public synchronized int getLinkCount()
     {
         return _linkCount;
-    }
-
-    public synchronized void setCreationTime(long time)
-    {
-        _creationTime = time;
     }
 
     @Override
@@ -237,7 +231,7 @@ public class CacheRepositoryEntryImpl implements ReplicaRecord
     @Override
     public Collection<StickyRecord> removeExpiredStickyFlags() throws CacheException
     {
-        return update(r -> {
+        return update("removing expired sticky", r -> {
             long now = System.currentTimeMillis();
             List<StickyRecord> removed = Lists.newArrayList(filter(_sticky, s -> !s.isValidAt(now)));
             if (!removed.isEmpty()) {
@@ -253,7 +247,7 @@ public class CacheRepositoryEntryImpl implements ReplicaRecord
     }
 
     @Override
-    public synchronized <T> T update(Update<T> update) throws CacheException
+    public synchronized <T> T update(String why, Update<T> update) throws CacheException
     {
         AtomicReference<T> result = new AtomicReference<>();
         ReplicaState state = _state;

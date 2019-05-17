@@ -381,7 +381,7 @@ public class ReplicaRepository
                     switch (event.getNewState()) {
                     case REMOVED:
                         if (event.getOldState() != NEW) {
-                            LOGGER.info("remove entry for: {}", id);
+                            LOGGER.info("remove entry {}: {}", id, event.getWhy());
                         }
 
                         _pnfs.clearCacheLocation(id, _volatile);
@@ -600,7 +600,7 @@ public class ReplicaRepository
             LOGGER.info("Creating new entry for {}", id);
 
             ReplicaRecord entry = _store.create(id, flags);
-            return entry.update(r -> {
+            return entry.update("Creating new replica", r -> {
                 r.setFileAttributes(fileAttributes);
                 r.setState(transferState);
                 return new WriteHandleImpl(this, buildAllocator(flags, maximumSize), _pnfs,
@@ -661,14 +661,20 @@ public class ReplicaRepository
                 entry.incrementLinkCount();
             }
 
-            return new ReadHandleImpl(_pnfs, entry, fileAttributes);
+            // Here we assume that all client-drive activity can (potentially)
+            // update the file's atime (hence does not have NOATIME flag), while
+            // all dCache-internal activity cannot (hence has NOATIME flag).
+            boolean isInternalActivity = flags.contains(OpenFlags.NOATIME);
+
+            return new ReadHandleImpl(_pnfs, entry, fileAttributes, isInternalActivity);
         } catch (FileNotInCacheException e) {
             /* Somebody got the idea that we have the file, so we make
              * sure to remove any stray pointers.
              */
             try {
                 ReplicaRecord entry = _store.create(id, EnumSet.noneOf(OpenFlags.class));
-                entry.update(r -> r.setState(REMOVED));
+                entry.update("Removing replica created to recover from unknown open request",
+                        r -> r.setState(REMOVED));
             } catch (DuplicateEntryException concurrentCreation) {
                 return openEntry(id, flags);
             } catch (CacheException | RuntimeException f) {
@@ -724,7 +730,8 @@ public class ReplicaRepository
                  */
                 try {
                     entry = _store.create(id, EnumSet.noneOf(OpenFlags.class));
-                    entry.update(r -> r.setState(REMOVED));
+                    entry.update("Removing replica created to recover from unknown setSticky request",
+                            r -> r.setState(REMOVED));
                 } catch (DuplicateEntryException concurrentCreation) {
                     setSticky(id, owner, expire, overwrite);
                     return;
@@ -734,7 +741,7 @@ public class ReplicaRepository
                 throw e;
             }
 
-            entry.update(r -> {
+            entry.update("Setting " + owner + " sticky", r -> {
                 switch (r.getState()) {
                 case NEW:
                 case FROM_CLIENT:
@@ -776,7 +783,7 @@ public class ReplicaRepository
     }
 
     @Override
-    public void setState(PnfsId id, ReplicaState state)
+    public void setState(PnfsId id, ReplicaState state, String why)
         throws IllegalArgumentException, InterruptedException, CacheException
     {
         if (id == null) {
@@ -789,7 +796,7 @@ public class ReplicaRepository
 
             try {
                 ReplicaRecord entry = getReplicaRecord(id);
-                entry.update(r -> {
+                entry.update(why, r -> {
                     ReplicaState source = r.getState();
                     switch (source) {
                     case NEW:

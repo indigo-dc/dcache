@@ -61,6 +61,8 @@ package org.dcache.resilience.data;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
@@ -72,7 +74,9 @@ import java.util.Set;
 
 import diskCacheV111.util.CacheException;
 import diskCacheV111.util.PnfsId;
+
 import dmg.cells.nucleus.CellPath;
+
 import org.dcache.cells.CellStub;
 import org.dcache.pool.migration.PoolMigrationCopyFinishedMessage;
 import org.dcache.resilience.handlers.FileOperationHandler;
@@ -122,6 +126,9 @@ import org.dcache.vehicles.resilience.ForceSystemStickyBitMessage;
  *      to be unsynchronized.</p>
  */
 public final class FileOperation {
+    private static final Logger ACTIVITY_LOGGER =
+            LoggerFactory.getLogger("org.dcache.resilience-log");
+
     /*
      * Stored state. Instead of using enum, to leave less of a memory footprint.
      * As above.
@@ -137,12 +144,11 @@ public final class FileOperation {
      */
     static final int WAITING  = 0;     // NEXT TASK READY TO RUN
     static final int RUNNING  = 1;     // TASK SUBMITTED TO THE EXECUTOR
-    static final int DONE     = 2;     // CURRENT TASK SUCCESSFULLY COMPLETED
+    static final int DONE     = 2;     // CURRENT TASK COMPLETED WITHOUT ERROR
     static final int CANCELED = 3;     // CURRENT TASK WAS TERMINATED BY USER
     static final int FAILED   = 4;     // CURRENT TASK FAILED WITH EXCEPTION
-    static final int VOID     = 5;     // NO FURTHER WORK NEEDS TO BE DONE
-    static final int ABORTED  = 6;     // CANNOT DO ANYTHING FURTHER
-    static final int UNINITIALIZED = 7;
+    static final int ABORTED  = 5;     // CANNOT DO ANYTHING FURTHER
+    static final int UNINITIALIZED = 6;
 
     private static final String TO_STRING =
                     "%s (%s %s)(%s %s)(parent %s, count %s, retried %s)";
@@ -250,6 +256,7 @@ public final class FileOperation {
 
         String pool = poolInfoMap.getPool(getNullForNil(source));
 
+        ACTIVITY_LOGGER.info("Setting system sticky for {} on {}", pnfsId, pool);
         pools.send(new CellPath(pool),
                    new ForceSystemStickyBitMessage(pool, pnfsId));
     }
@@ -320,8 +327,6 @@ public final class FileOperation {
                 return "CANCELED";
             case FAILED:
                 return "FAILED";
-            case VOID:
-                return "VOID";
             case ABORTED:
                 return "ABORTED";
             case UNINITIALIZED:
@@ -403,12 +408,9 @@ public final class FileOperation {
                         retried, exception == null ? "" : new ExceptionMessage(exception));
     }
 
-    void abortOperation() {
-        synchronized( this) {
-            updateState(ABORTED);
-            opCount = 0;
-        }
-
+    synchronized void abortOperation() {
+        updateState(ABORTED);
+        opCount = 0;
         lastUpdate = System.currentTimeMillis();
         source = NIL;
         target = NIL;
@@ -444,15 +446,13 @@ public final class FileOperation {
         tried.add(target);
     }
 
-    boolean cancelCurrent() {
-        synchronized( this) {
-            if (isInTerminalState()) {
-                return false;
-            }
-
-            updateState(CANCELED);
-            --opCount;
+    synchronized boolean cancelCurrent() {
+        if (isInTerminalState()) {
+            return false;
         }
+
+        updateState(CANCELED);
+        --opCount;
 
         lastUpdate = System.currentTimeMillis();
         if (task != null) {
@@ -490,10 +490,8 @@ public final class FileOperation {
         ++retried;
     }
 
-    void resetOperation() {
-        synchronized (this) {
-            updateState(WAITING);
-        }
+    synchronized void resetOperation() {
+        updateState(WAITING);
         task = null;
         exception = null;
         lastUpdate = System.currentTimeMillis();
@@ -510,7 +508,7 @@ public final class FileOperation {
     }
 
     void setLastType() {
-        if (task != null) {
+        if (task != null && getType() != Type.VOID) {
             lastType = task.getTypeValue();
         }
     }
@@ -544,14 +542,13 @@ public final class FileOperation {
     }
 
     @VisibleForTesting
-    void setState(String state) {
+    synchronized void setState(String state) {
         switch (state) {
             case "WAITING":     updateState(WAITING);   break;
             case "RUNNING":     updateState(RUNNING);   break;
             case "DONE":        updateState(DONE);      break;
             case "CANCELED":    updateState(CANCELED);  break;
             case "FAILED":      updateState(FAILED);    break;
-            case "VOID":        updateState(VOID);      break;
             case "ABORTED":     updateState(ABORTED);   break;
             case "UNINITIALIZED":
                 throw new IllegalArgumentException("Cannot set "
@@ -570,7 +567,7 @@ public final class FileOperation {
      *    queued, we simply overwrite the appropriate fields on
      *    this one.</p>
      */
-    void updateOperation(FileOperation operation) {
+    synchronized void updateOperation(FileOperation operation) {
         if (operation.storageUnit != NIL) {
             storageUnit = operation.storageUnit;
         }
@@ -589,34 +586,30 @@ public final class FileOperation {
         opCount += operation.opCount;
     }
 
-    boolean updateOperation(CacheException error) {
-        synchronized (this) {
-            if (isInTerminalState()) {
-                return false;
-            }
+    synchronized boolean updateOperation(CacheException error) {
+        if (isInTerminalState()) {
+            return false;
+        }
 
-            if (error != null) {
-                exception = error;
-                updateState(FAILED);
-            } else {
-                updateState(DONE);
-                --opCount;
-                retried = 0;
-            }
+        if (error != null) {
+            exception = error;
+            updateState(FAILED);
+        } else {
+            updateState(DONE);
+            --opCount;
+            retried = 0;
         }
 
         lastUpdate = System.currentTimeMillis();
         return true;
     }
 
-    boolean voidOperation() {
-        synchronized(this) {
-            if (isInTerminalState()) {
-                return false;
-            }
-            updateState(VOID);
-            opCount = 0;
+    synchronized boolean voidOperation() {
+        if (isInTerminalState()) {
+            return false;
         }
+        updateState(DONE);
+        opCount = 0;
         retried = 0;
         source = NIL;
         target = NIL;
@@ -641,7 +634,7 @@ public final class FileOperation {
     }
 
     private synchronized String lastTypeName() {
-        return lastType == NIL ? "" : Type.values()[lastType].toString();
+        return lastType == NIL ? "NOOP" : Type.values()[lastType].toString();
     }
 
     private int setNilForNull(Integer value) {

@@ -3,7 +3,7 @@ Message passing
 
 The dCache system is divided into cells which communicate with each other via messages. Cells run inside domains and cells communicate by passing messages to each other. Domains are connected through cell tunnels which exchange messages over TCP.
 
-Each domain runs in a separate Java virtual machine and each cell is run as a separate thread therein. Domain names have to be unique. The domains communicate with each other via `TCP` using connections that are established at start-up. The topology is controlled by the location manager service. When configured, all domains connect with a core domains, which routes all messages to the appropriate domains. This forms a star topology.
+Each domain runs in a separate Java virtual machine and each cell is run as a separate thread therein. Domain names have to be unique. The domains communicate with each other via `TCP` using connections that are established at start-up. The topology is controlled by the location manager service. When configured, all domains connect with a core domain, which routes all messages to the appropriate domains. This forms a star topology.
 
 > **ONLY FOR MESSAGE COMMUNICATION**
 >
@@ -13,8 +13,7 @@ Within this framework, cells send messages to other cells addressing them in the
 
 A domain is started with a shell script **bin/dcache start** domainName. The routing manager and location manager cells are started in each domain and are part of the underlying cell package structure. Each domain will contain at least one cell in addition to them.
 
-Naming and addressing
----------------------
+## Naming and addressing
 
 Domains must have a name unique through the dCache installation. Each cell has a
 unique name within the domain in which it is running. A fully qualified cell
@@ -23,8 +22,7 @@ at-sign, e.g. `PoolManager@dCacheDomain`. Unqualified addresses either do not
 have a domain suffix or have a `local` suffix, e.g. `PoolManager@local`. It
 follows that `local` is an illegal domain name.
 
-Routing
--------
+## Routing
 
 Each domain has a message routing table. This routing table may be inspected and
 manipulated through the `System` cell inside that domain. Routing tables are
@@ -52,7 +50,7 @@ domain route is removed.
 
 ### Core and satellite domains
 
-dCache domains are either designated as either `core` domains or `satellite` domains
+dCache domains are designated as either `core` domains or `satellite` domains
 in the configuration. Core domains act as message hubs, forwarding messages on
 behalf of satellite domains.
 
@@ -63,7 +61,7 @@ domain listens for a connection.
 
 Satellite domains connect to all core domains.
 
-Other than that, there are no difference between core and satellite domains -
+Other than that, there are no differences between core and satellite domains -
 they can both host arbitrary dCache services, including none at all.
 
 ### Location manager
@@ -157,8 +155,7 @@ fact that a message to a topic is delivered along all topic routes - as well as
 one of the default routes. Messages to named queues on the other hand are only
 routed along one of the queue routes chosen at random.
 
-Configuration
--------------
+## Configuration
 
 All domains default to being satellite domains. Unless some domain is explicitly
 marked as a core domain, domains will be disconnected from each other.

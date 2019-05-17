@@ -19,7 +19,9 @@
 package diskCacheV111.namespace;
 
 import com.google.common.collect.Range;
+import com.google.common.escape.Escaper;
 import com.google.common.io.BaseEncoding;
+import com.google.common.net.UrlEscapers;
 import org.apache.curator.shaded.com.google.common.hash.Hashing;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,8 +33,10 @@ import java.nio.charset.StandardCharsets;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.EnumSet;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.dcache.namespace.events.EventType;
 
@@ -50,6 +54,7 @@ import org.dcache.util.Glob;
 import org.dcache.vehicles.FileAttributes;
 
 import static java.util.Objects.requireNonNull;
+import static org.dcache.namespace.FileAttribute.ACCESS_TIME;
 
 
 /**
@@ -63,6 +68,8 @@ public class MonitoringNameSpaceProvider extends ForwardingNameSpaceProvider
     private static final EnumSet<FileAttribute> PNFSID = EnumSet.of(FileAttribute.PNFSID);
     private static final EnumSet<FileAttribute> FILETYPE = EnumSet.of(FileAttribute.TYPE);
     private static final EnumSet<FileAttribute> PNFSID_FILETYPE = EnumSet.of(FileAttribute.PNFSID, FileAttribute.TYPE);
+    private static final EnumSet<FileAttribute> SIGNIFICANT_UPDATES =
+            EnumSet.complementOf(EnumSet.of(FileAttribute.ACCESS_TIME));
 
     private NameSpaceProvider delegate;
     private EventReceiver eventReceiver;
@@ -151,12 +158,19 @@ public class MonitoringNameSpaceProvider extends ForwardingNameSpaceProvider
         FileAttributes returnAttr = super.setFileAttributes(subject, target, attr,
                 union(fetch,FILETYPE));
 
-        FileType type = returnAttr.getFileType();
+        if (!attr.isUndefined(SIGNIFICANT_UPDATES)) {
+            FileType type = returnAttr.getFileType();
 
-        eventReceiver.notifySelfEvent(EventType.IN_ATTRIB, target, type);
-        notifyParents(target, EventType.IN_ATTRIB, type);
+            eventReceiver.notifySelfEvent(EventType.IN_ATTRIB, target, type);
+            notifyParents(target, EventType.IN_ATTRIB, type);
+        }
 
         return returnAttr;
+    }
+
+    private String serialiseLink(PnfsId id, String name)
+    {
+        return id + " " + UrlEscapers.urlFragmentEscaper().escape(name);
     }
 
     @Override
@@ -168,6 +182,44 @@ public class MonitoringNameSpaceProvider extends ForwardingNameSpaceProvider
                 union(requestAttributes, PNFSID));
 
         notifyParents(ret.getPnfsId(), EventType.IN_CREATE, FileType.REGULAR);
+
+        if (ret.isDefined(FileAttribute.STORAGEINFO)) {
+            FsPath target = FsPath.create(path);
+            PnfsId parent = super.pathToPnfsid(Subjects.ROOT, target.parent().toString(), true);
+
+            ret.getStorageInfo().setKey("links", serialiseLink(parent, target.name()));
+        }
+
+        return ret;
+    }
+
+    @Override
+    public FileAttributes getFileAttributes(Subject subject, PnfsId id,
+            Set<FileAttribute> requestAttributes) throws CacheException
+    {
+        FileAttributes ret = super.getFileAttributes(subject, id, requestAttributes);
+
+        // REVISIT: we only need to do this if this getFileAttributes is for
+        // a file open.  Can we somehow avoid doing this for other
+        // getFileAttribute calls?
+        if (ret.isDefined(FileAttribute.STORAGEINFO)) {
+            // If the file has hard-links then we don't know which is being
+            // accessed by the client.  Notify on all of them.  This behaviour
+            // is different from Linux.
+            try {
+                String links = super.find(Subjects.ROOT, id).stream()
+                        .map(l -> serialiseLink(l.getParent(), l.getName()))
+                        .collect(Collectors.joining("#"));
+                ret.getStorageInfo().setKey("links", links);
+            } catch (FileNotFoundCacheException e) {
+                // Simply indicates that the target is the root directory
+                // (which has no parent) or is no longer present in the namespace.
+                LOGGER.debug("Failed to find {}: {}", id, e.getMessage());
+            } catch (CacheException e) {
+                // Some other (unexpected) error
+                LOGGER.warn("Unable to find {}: {}", id, e.getMessage());
+            }
+        }
 
         return ret;
     }

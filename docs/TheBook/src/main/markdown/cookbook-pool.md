@@ -1,24 +1,24 @@
-Chapter 23. Pool OperationsPool Operations
+Chapter 23. Pool Operations
 ==========================================
 
-Table of Contents
+## Table of Contents
 
 + [Checksums](#checksums)
 
-    [How to configure checksum calculation](#how-to-configure-checksum-calculation)
+  * [How to configure checksum calculation](#how-to-configure-checksum-calculation)
 
 + [Migration Module](#migration-module)
 
-    [Overview and Terminology](#overview-and-terminology)
-    [Command Summary](#command-summary)
-    [Examples](#examples)
+  * [Overview and Terminology](#overview-and-terminology)
+  * [Command Summary](#command-summary)
+  * [Examples](#examples)
 
 + [Renaming a Pool](#renaming-a-pool)
 + [Pinning Files to a Pool](#pinning-files-to-a-pool)
 + [Running pool with CEPH backend](#running-pool-with-ceph-backend)
++ [Keeping metadata on MongoDB](#keeping-metadata-on-mongodb)
 
-Checksums
-=========
+## Checksums
 
 In dCache the storage of a checksum is part of a successful transfer.
 
@@ -48,8 +48,7 @@ After all the file data has been received by the dCache server and the file has 
 
 The default configuration is that a checksum is calculated on write, i.e. a Server File Checksum.
 
-How to configure checksum calculation
--------------------------------------
+### How to configure checksum calculation
 
 Configure the calculation of checksums in the [admin interface](https://www.dcache.org/manuals/Book-2.16/start/intouch-admin-fhs.shtml). The configuration has to be done for each pool separately.
 
@@ -112,8 +111,7 @@ If an option is enabled a checksum is calculated as described. If there is alrea
 >
 > Do not change the default configuration for the option `enforcecrc`. This option should always be enabled as this ensures that there will always be a checksum stored with a file.
 
-Migration Module
-================
+## Migration Module
 
 The purpose of the migration module is essentially to copy or move the content of a pool to one or more other pools.
 
@@ -126,8 +124,7 @@ Typical use cases for the migration module include:
 -   As an alternative to the hopping manager.
 
 
-Overview and Terminology
-------------------------
+### Overview and Terminology
 
 The migration module runs inside pools and hosts a number of migration jobs. Each job operates on a set of files on the pool on which it is executed and can copy or move those files to other pools. The migration module provides filters for defining the set of files on which a job operates.
 
@@ -151,8 +148,7 @@ Idempotence is achieved by locating existing copies of a file on any of the targ
 
 A migration task aborts whenever it runs into a problem. The file will be reinserted at the end of the transfer queue. Consequently, once a migration job terminates, all files have been successfully transferred. If for some reason tasks for particular files keep failing, then the migration job will never terminate by itself as it retries indefinitely.
 
-Command Summary
----------------
+### Command Summary
 
 Login to the [admin interface](https://www.dcache.org/manuals/Book-2.16/start/intouch-admin-fhs.shtml) and `cd` to a pool to use the `migration` commands. Use the command `help migration` to view the possiblities.
 
@@ -184,33 +180,20 @@ migration move
 
 The command `migration move` does the same as the command `migration copy` with the options:
 
--   -smode
-    =
-    delete
-    (default for
-    migration copy
-    is
-    same
-    ).
--   -pins
-    =
-    move
-    (default for
-    migration copy
-    is
-    keep
-    ).
+    -smode=delete
+    (default for migration copy is same).
+    
+    -pins=move
+    (default for migration copy is keep).
 
 additionally it uses the option `-verify`.
 
 migration cache
 The command `migration cache` does the same as the command `migration copy` with the option:
 
--   -tmode
-    =
-    cached
+    -tmode = cached
 
-Jobs are assinged a job ID and are executed in the background. The status of a job may be queried through the `migration info` command. A list of all jobs can be obtained through `migration ls`. Jobs stay in the list even after they have terminated. Terminated jobs can be cleared from the list through the `migration clear` command.
+Jobs are assigned a job ID and are executed in the background. The status of a job may be queried through the `migration info` command. A list of all jobs can be obtained through `migration ls`. Jobs stay in the list even after they have terminated. Terminated jobs can be cleared from the list through the `migration clear` command.
 
 Jobs can be suspended, resumed and cancelled through the `migration suspend`, `migration
         resume` and `migration cancel` commands. Existing tasks are allowed to finish before a job is suspended or cancelled.
@@ -293,10 +276,9 @@ Except for the number of concurrent tasks, transfer parameters of existing jobs 
 
 
 
-Examples
---------
+### Examples
 
-### Vacating a pool
+#### Vacating a pool
 
 To vacate the pool <sourcePool>, we first mark the pool `read-only` to avoid that more files are added to the pool, and then move all files to the pool <targetPool>. It is not strictly necessary to mark the pool `read-only`, however if not done there is no guarantee that the pool is empty when the migration job terminates. The job can be rerun to move remaining files.
 
@@ -327,7 +309,7 @@ To vacate the pool <sourcePool>, we first mark the pool `read-only` to avoid tha
     (<sourcePool>) admin > rep ls
     (<sourcePool>) admin >
 
-### Caching recently accessed files
+#### Caching recently accessed files
 
 Say we want to cache all files belonging to the storage group `atlas:default` and accessed within the last month on a set of low-cost cache pools defined by the pool group `cache_pools`. We can achieve this through the following command.
 
@@ -347,8 +329,7 @@ Say we want to cache all files belonging to the storage group `atlas:default` an
 
 The files on the source pool will not be altered. Any file copied to one of the target pools will be marked cached.
 
-Renaming a Pool
-===============
+## Renaming a Pool
 
 A pool may be renamed with the following procedure, regardless of the type of files stored on it.
 
@@ -410,8 +391,7 @@ Register the files on the pool with
 
    (<poolname>) admin > pnfs register
 
-Pinning Files to a Pool
-=======================
+## Pinning Files to a Pool
 
 You may pin a file locally within the private pool repository:
 
@@ -431,24 +411,25 @@ This command does:
 
 3.  All new copies of the file will become `sticky`.
 
-Running pool with CEPH backend
-==============================
+## Running pools on CEPH backends
 
-dCache pools can be configured to store files on locally mounted file system or use CEPH as a back-end. The property `pool.backend` is used to control which back-end should be used:
+dCache pools can be configured to store files on locally mounted file systems or use CEPH as a back-end. The property `pool.backend` is used to control which back-end should be used:
 
     pool.backend = ceph
 
-dCache uses CEPH's block devices interface, know as `RBD` to store data. The dCache pools one-to-one mapped to CEPH pools. The CEPH pool must be manually created and, if required, configured before dCache can use it.
+dCache uses CEPH's block devices interface, know as `RBD`, to store data. The dCache pools map one-to-one onto CEPH pools. The CEPH pool must be manually created and, if required, configured before dCache can use it.
 
     $ rados mkpool <pool-name>
 
-By default, CEPH pool name expected to match dCache pool name. This can be change as
+By default, the CEPH pool name is expected to match the dCache pool name. This can be changed by using
 
     pool.backend.ceph.pool-name = ceph-pool-to-use
 
-dCache uses locally configured ceph client to operate. The location to client configuration files is controlled by `pool.backend.ceph.config` property and defaults to _/etc/ceph/ceph.conf_.
+dCache uses a locally configured ceph client to operate. The location to client configuration files is controlled by `pool.backend.ceph.config` property and defaults to _/etc/ceph/ceph.conf_.
 
-In order to support HSM with CEPH-backended pools, the HSM script interface provides URI-like syntax to pass file location to the HSM script:
+For authentication, the property `pool.backend.ceph.cluster` is used to set the cluser name to use, and for a cluster name of "CLNAME", the corresponding file `/etc/ceph/ceph.client.CLNAME.keyring` is used as the key ring.
+
+In order to support HSM with CEPH-backended pools, the HSM script interface provides URI-like syntax to pass file locations to the HSM script:
 
     rbd://<ceph-pool>/<pnfsid>
 
@@ -457,6 +438,62 @@ for instance:
     rbd://dcache-pool-A/00000051ADCB3BA14799844556CD3AF0A9DF
 
 The HSM script is responsible to read, write and delete RBD image on GET, PUT and DELETE.
+
+
+## Keeping metadata on MongoDB
+
+In order to speed up database operations for metadata, dCache pools (starting from version 3.2) can store their metadata on an external MongoDB instance. For production scenarios, a dedicated, performance-optimized and well-maintained MongoDB cluster is required. 
+
+Usage of MongoDB is enabled by setting
+
+    pool.plugins.meta=org.dcache.pool.repository.meta.mongo.MongoDbMetadataRepository
+
+and the connection can be configured through the properties
+
+    pool.plugins.meta.mongo.url=mongodb://localhost:27017
+    pool.plugins.meta.mongo.db=pdm
+    pool.plugins.meta.mongo.collection=poolMetadata
+
+The database will greatly profit from an index on `pnfsid` and `pool`:
+
+    $ mongo <dbhost>:27017
+    >
+    > use pdm
+    > db.poolMetadata.createIndex({"pnfsid": 1," pool": 1})
+
+Apart from performance improvements, storing metadata on MongoDB makes it possible to easily query information about PNFSIDs right from the database. Consider the following examples:
+
+    > db.poolMetadata.findOne({"pool":"dcache-lab003-A", "pnfsid" : "0000526B3EEB9A41453CB9655531A8F4DA99"})
+    {
+    	"_id" : ObjectId("5a97c43d156fad9353c907f8"),
+    	"pnfsid" : "0000526B3EEB9A41453CB9655531A8F4DA99",
+    	"pool" : "dcache-lab003-A",
+    	"version" : 1,
+    	"created" : NumberLong("1519895538832"),
+    	"hsm" : "osm",
+    	"storageClass" : "<Unknown>:<Unknown>",
+    	"size" : NumberLong(1795),
+    	"accessLatency" : "NEARLINE",
+    	"retentionPolicy" : "CUSTODIAL",
+    	"locations" : [ ],
+    	"map" : {
+    		"path" : "/",
+    		"uid" : "0",
+    		"gid" : "0",
+    		"flag-c" : "1:c6620e81"
+    	},
+    	"replicaState" : "PRECIOUS",
+    	"stickyRecords" : {
+    		
+    	}
+    }
+    
+This example shows how to query all files with a given checksum:
+    
+    > db.poolMetadata.find({"map.flag-c" : "1:c6620e81"})
+    { "_id" : ObjectId("59104d3cb7958d3262babcaa"), "pnfsid" : "000096DC6664573C409C8D3308384CC5E25C", "pool" : "dcache-lab001-A", "version" : 1, "created" : NumberLong("1494240165952"), "hsm" : "osm", "storageClass" : "<Unknown>:<Unknown>", "size" : NumberLong(1795), "accessLatency" : "NEARLINE", "retentionPolicy" : "CUSTODIAL", "locations" : [ ], "map" : { "uid" : "3750", "gid" : "1000", "flag-c" : "1:c6620e81" }, "replicaState" : "PRECIOUS", "stickyRecords" : {  } }
+    { "_id" : ObjectId("5a97c43d156fad9353c907f8"), "pnfsid" : "0000526B3EEB9A41453CB9655531A8F4DA99", "pool" : "dcache-lab003-A", "version" : 1, "created" : NumberLong("1519895538832"), "hsm" : "osm", "storageClass" : "<Unknown>:<Unknown>", "size" : NumberLong(1795), "accessLatency" : "NEARLINE", "retentionPolicy" : "CUSTODIAL", "locations" : [ ], "map" : { "path" : "/", "uid" : "0", "gid" : "0", "flag-c" : "1:c6620e81" }, "replicaState" : "PRECIOUS", "stickyRecords" : {  } }
+
 
   [admin interface]: #intouch-admin
   [???]: #in-install-layout

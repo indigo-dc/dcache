@@ -2,6 +2,7 @@
 
 package org.dcache.pool.classic;
 
+import com.google.common.base.Splitter;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.net.InetAddresses;
 import com.google.common.util.concurrent.FutureCallback;
@@ -38,8 +39,6 @@ import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 import diskCacheV111.pools.PoolCellInfo;
@@ -73,7 +72,6 @@ import diskCacheV111.vehicles.PoolMgrReplicateFileMsg;
 import diskCacheV111.vehicles.PoolModifyModeMessage;
 import diskCacheV111.vehicles.PoolModifyPersistencyMessage;
 import diskCacheV111.vehicles.PoolMoverKillMessage;
-import diskCacheV111.vehicles.PoolQueryRepositoryMsg;
 import diskCacheV111.vehicles.PoolRemoveFilesFromHSMMessage;
 import diskCacheV111.vehicles.PoolRemoveFilesMessage;
 import diskCacheV111.vehicles.PoolSetStickyMessage;
@@ -152,9 +150,6 @@ public class PoolV4
     private static final int HEARTBEAT = 30;
 
     private static final double DEFAULT_BREAK_EVEN = 0.7;
-
-    private static final Pattern TAG_PATTERN =
-        Pattern.compile("([^=]+)=(\\S*)\\s*");
 
     private static final Logger LOGGER = LoggerFactory.getLogger(PoolV4.class);
 
@@ -425,19 +420,11 @@ public class PoolV4
     @Required
     public void setTags(String tags)
     {
-        Map<String,String> newTags = new HashMap<>();
-        Matcher matcher = TAG_PATTERN.matcher(tags);
-        while (matcher.lookingAt()) {
-            String tag = matcher.group(1);
-            String value = matcher.group(2);
-            newTags.put(tag, value);
-            matcher.region(matcher.end(), matcher.regionEnd());
-        }
-
-        if (matcher.regionStart() != matcher.regionEnd()) {
-            String msg = "Cannot parse '" + tags.substring(matcher.regionStart()) + "'";
-            throw new IllegalArgumentException(msg);
-        }
+        Map<String,String> newTags = Splitter.on(' ')
+                .omitEmptyStrings()
+                .trimResults()
+                .withKeyValueSeparator('=')
+                .split(tags);
 
         newTags.forEach(((key,value) -> {
             _tags.put(key, value);
@@ -559,16 +546,19 @@ public class PoolV4
     {
         Throwable cause = event.getCause();
         String poolState;
+        PredefinedAlarm alarm;
         switch (event.getAction()) {
         case READONLY:
             poolState = "Pool read-only: ";
             disablePool(PoolV2Mode.DISABLED_RDONLY,
                             99, poolState + event.getMessage());
+            alarm = null;
             break;
 
         case DISABLED:
             poolState = "Pool disabled: ";
             disablePool(PoolV2Mode.DISABLED_STRICT, 99, poolState + event.getMessage());
+            alarm = PredefinedAlarm.POOL_DISABLED;
             break;
 
         default:
@@ -576,20 +566,21 @@ public class PoolV4
             disablePool(PoolV2Mode.DISABLED_STRICT
                             | PoolV2Mode.DISABLED_DEAD,
                             666, poolState + event.getMessage());
+            alarm = PredefinedAlarm.POOL_DEAD;
             break;
         }
 
-        String message = "Fault occurred in " + event.getSource() + ": "
-                        + event.getMessage() +". " + poolState;
-
-        if (cause != null) {
-            LOGGER.error(AlarmMarkerFactory.getMarker(PredefinedAlarm.POOL_DISABLED,
-                                                      _poolName),
-                         "{}: {}", message, cause.toString());
-        } else {
-            LOGGER.error(AlarmMarkerFactory.getMarker(PredefinedAlarm.POOL_DISABLED,
-                                                      _poolName),
-                         message);
+        if (alarm != null) {
+            if (cause != null) {
+                LOGGER.error(AlarmMarkerFactory.getMarker(alarm, _poolName),
+                             "Fault occurred in {}: {}. {}, cause: {}",
+                             event.getSource(), event.getMessage(), poolState,
+                             cause.toString());
+            } else {
+                LOGGER.error(AlarmMarkerFactory.getMarker(alarm, _poolName),
+                             "Fault occurred in {}: {}. {}",
+                             event.getSource(), event.getMessage(), poolState);
+            }
         }
     }
 
@@ -666,6 +657,7 @@ public class PoolV4
                 msg.setFileSize(entry.getReplicaSize());
                 msg.setStorageInfo(entry.getFileAttributes().getStorageInfo());
                 msg.setSubject(Subjects.ROOT);
+                msg.setResult(0, event.getWhy());
                 _billingStub.notify(msg);
 
                 _kafkaSender.accept(msg);
@@ -911,27 +903,9 @@ public class PoolV4
 
         private void _initiateReplication(CacheEntry entry, String source)
         {
-            PnfsId pnfsId = entry.getPnfsId();
-            FileAttributes fileAttributes = entry.getFileAttributes();
-            StorageInfo storageInfo = fileAttributes.getStorageInfo().clone();
-
-            storageInfo.setKey("replication.source", source);
-
-            FileAttributes attributes = new FileAttributes();
-            attributes.setPnfsId(pnfsId);
-            attributes.setStorageInfo(storageInfo);
-            attributes.setStorageClass(fileAttributes.getStorageClass());
-            if (fileAttributes.isDefined(CHECKSUM)) {
-                attributes.setChecksums(fileAttributes.getChecksums());
-            }
-            attributes.setSize(fileAttributes.getSize());
-            attributes.setCacheClass(fileAttributes.getCacheClass());
-            attributes.setHsm(fileAttributes.getHsm());
-            attributes.setFlags(fileAttributes.getFlags());
+            FileAttributes attributes = entry.getFileAttributes().clone();
             attributes.setLocations(Collections.singleton(_poolName));
-            attributes.setSize(fileAttributes.getSize());
-            attributes.setAccessLatency(fileAttributes.getAccessLatency());
-            attributes.setRetentionPolicy(fileAttributes.getRetentionPolicy());
+            attributes.getStorageInfo().setKey("replication.source", source);
 
             PoolMgrReplicateFileMsg req =
                 new PoolMgrReplicateFileMsg(attributes,
@@ -1234,8 +1208,8 @@ public class PoolV4
         return msg;
     }
 
-    public Reply messageArrived(PoolRemoveFilesMessage msg)
-        throws CacheException
+    public Reply messageArrived(CellMessage envelope, PoolRemoveFilesMessage msg)
+            throws CacheException
     {
         if (_poolMode.isDisabled(PoolV2Mode.DISABLED)) {
             LOGGER.warn("PoolRemoveFilesMessage request rejected due to {}", _poolMode);
@@ -1243,7 +1217,7 @@ public class PoolV4
         }
 
         List<ListenableFutureTask<String>> tasks = Stream.of(msg.getFiles())
-                .map(file -> ListenableFutureTask.create(() -> remove(file))).collect(toList());
+                .map(file -> ListenableFutureTask.create(() -> remove(file, envelope.getSourceAddress().toString()))).collect(toList());
         tasks.forEach(_executor::execute);
         MessageReply<PoolRemoveFilesMessage> reply = new MessageReply<>();
         Futures.addCallback(Futures.allAsList(tasks),
@@ -1270,7 +1244,7 @@ public class PoolV4
         return reply;
     }
 
-    private String remove(String file) throws CacheException, InterruptedException
+    private String remove(String file, String requestor) throws CacheException, InterruptedException
     {
         try {
             PnfsId pnfsId = new PnfsId(file);
@@ -1279,7 +1253,7 @@ public class PoolV4
                 LOGGER.error("Replica {} kept (precious)", file);
                 return file;
             } else {
-                _repository.setState(pnfsId, ReplicaState.REMOVED);
+                _repository.setState(pnfsId, ReplicaState.REMOVED, "At request of " + requestor);
                 return null;
             }
         } catch (IllegalTransitionException e) {
@@ -1288,22 +1262,22 @@ public class PoolV4
         }
     }
 
-    public PoolModifyPersistencyMessage
-        messageArrived(PoolModifyPersistencyMessage msg)
+    public PoolModifyPersistencyMessage messageArrived(CellMessage envelope,
+            PoolModifyPersistencyMessage msg)
     {
         try {
             PnfsId pnfsId = msg.getPnfsId();
             switch (_repository.getState(pnfsId)) {
             case PRECIOUS:
                 if (msg.isCached()) {
-                    _repository.setState(pnfsId, ReplicaState.CACHED);
+                    _repository.setState(pnfsId, ReplicaState.CACHED, "At request of " + envelope.getSourceAddress());
                 }
                 msg.setSucceeded();
                 break;
 
             case CACHED:
                 if (msg.isPrecious()) {
-                    _repository.setState(pnfsId, ReplicaState.PRECIOUS);
+                    _repository.setState(pnfsId, ReplicaState.PRECIOUS, "At request of " + envelope.getSourceAddress());
                 }
                 msg.setSucceeded();
                 break;
@@ -1383,13 +1357,6 @@ public class PoolV4
                         : 0,
                 true);
         msg.setSucceeded();
-        return msg;
-    }
-
-    public PoolQueryRepositoryMsg messageArrived(PoolQueryRepositoryMsg msg)
-        throws CacheException, InterruptedException
-    {
-        msg.setReply(new RepositoryCookie(), getRepositoryListing());
         return msg;
     }
 
@@ -1664,7 +1631,7 @@ public class PoolV4
                 _pnfs.addCacheLocation(id);
             } catch (FileNotFoundCacheException e) {
                 try {
-                    _repository.setState(id, ReplicaState.REMOVED);
+                    _repository.setState(id, ReplicaState.REMOVED, "PnfsManager claimed file not found during 'pnfs register' command");
                     LOGGER.info("File not found in PNFS; removed {}", id);
                 } catch (InterruptedException | CacheException f) {
                     LOGGER.error("File not found in PNFS, but failed to remove {}: {}", id, f);

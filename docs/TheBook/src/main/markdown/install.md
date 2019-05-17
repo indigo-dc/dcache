@@ -1,34 +1,35 @@
 Chapter 2. Installing dCache
 ============================
 
-**Table of Contents**
+## Table of Contents
 
 +  [Installing a dCache instance](#installing-a-dcache-instance)
 
-     [Prerequisites](#prerequisites)
-     [Installation of the dCache Software](#installation-of-the-dCache-software)
-     [Readying the PostgreSQL server for the use with dCache](#readying-the-postgresql-server-for-the-use-with-dcache)
-     [Configuring Chimera](#configuring-chimera)
-     [Configuring dCache](#configuring-dcache)
-     [Installing dCache on several nodes](#installing-dcache-on-several-nodes)
+     - [Prerequisites](#prerequisites)
+     - [Installation of the dCache Software](#installation-of-the-dCache-software)
+     - [Readying the PostgreSQL server for the use with dCache](#readying-the-postgresql-server-for-the-use-with-dcache)
+     - [Configuring Chimera](#configuring-chimera)
+     - [Configuring dCache](#configuring-dcache)
+     - [Installing dCache on several nodes](#installing-dcache-on-several-nodes)
 
 
 +  [Securing your dCache installation](#securiting-your-dcache-installation)
 +  [Upgrading a dCache Instance](#upgrading-a-dcache-instance)
 
-The first section describes the installation of a fresh dCache instance using RPM files downloaded from [the dCache home-page]. It is followed by a guide to upgrading an existing installation. In both cases we assume standard requirements of a small to medium sized dCache instance without an attached [tertiary storage system](rf-glossary.md#tertiary-storage-system). The third section contains some pointers on extended features.
+The first section describes the installation of a fresh dCache instance using RPM files downloaded from [the dCache home-page]. It is followed by a guide to upgrading an existing installation. In both cases we assume standard requirements of a small to medium sized dCache instance without an attached [tertiary storage system](rf-glossary.md#tertiary-storage-system). The third section contains some pointers to extended features.
 
-INSTALLING a dCache INSTANCE
-============================
+  [the dCache home-page]: https://www.dcache.org/
 
-In the following the installation of a dCache instance will be described. The Chimera name space provider, some management components, and the **SRM** need a PSQL server installed. We recommend running this PSQL on the local node. The first section describes the configuration of a PSQL server. After that the installation of CHIMERA and of the dCache components will follow. During the whole installation process root access is required.
 
-PREREQUISITES
--------------
+## INSTALLING A dCache INSTANCE
+
+In the following the installation of a dCache instance will be described. The Chimera namespace provider, some management components, and the **SRM** need a PSQL server installed. We recommend running this PSQL on the local node. The first section describes the configuration of a PSQL server. After that the installation of CHIMERA and of the dCache components will follow. During the whole installation process root access is required.
+
+### PREREQUISITES
 
 In order to install dCache the following requirements must be met:
 
--   An RPM-based Linux distribution is required for the following procedure. For Debian derived systems we provide Debian packages and for all other operating systems a tarball is available..
+-   An RPM-based Linux distribution is required for the following procedure. For Debian derived systems we provide Debian packages and for all other operating systems a tarball is available.
 
 -   dCache requires Java 8 JRE. Please use the latest patch-level and check for upgrades frequently. It is recommended to use JDK as dCache scripts can make use of some extra features that JDK provides to gather more diagnostic information (heap-dump, etc). This helps when tracking down bugs.
 
@@ -36,10 +37,9 @@ In order to install dCache the following requirements must be met:
 
     > **IMPORTANT**
     >
-    > For good performance it is necessary to maintain and tune your PostgreSQL server. There are several good books on this topic, one of which is [PostgreSQL 9.0 High Performance](https://www.2ndquadrant.com/de/buecher/).
+    > For good performance it is necessary to maintain and tune your PostgreSQL server. There are several good books on this topic, one of which is [PostgreSQL 9.0 High Performance](https://www.2ndquadrant.com/de/books/).
 
-INSTALLATION OF THE dCache SOFTWARE
------------------------------------
+### INSTALLATION OF THE dCache SOFTWARE
 
 The RPM packages may be installed right away, for example using the command:
 
@@ -47,12 +47,11 @@ The RPM packages may be installed right away, for example using the command:
 
 The actual packages are available at [https://www.dcache.org/downloads/IAgree.shtml](https://www.dcache.org/downloads/IAgree.shtml).
 
-READYING THE POSTGRESQL SERVER FOR THE USE WITH dCache
-------------------------------------------------
+### READYING THE POSTGRESQL SERVER FOR THE USE WITH dCache
 
 Using a PostgreSQL server with dCache places a number of requirements on the database. You must configure PostgreSQL for use by dCache and create the necessary PostgreSQL user accounts and database structure. This section describes how to do this.
 
-### Starting PSQL
+#### Starting PSQL
 
 Install the PostgreSQL server with the tools of the operating system.
 
@@ -63,9 +62,9 @@ Initialize the database directory (for PSQL version 10.1 this is `/var/lib/pgsql
     [root] # service postgresql-10 start
     Starting postgresql-10 service:                           [  OK  ]
 
-### Enabling local trust
+#### Enabling local trust
 
-Perhaps the simplest configuration is to allow password-less access to the database and the following documentation assumes this is so.
+Perhaps the simplest configuration is to allow password-less access to the database. The following documentation assumes this to be the case.
 
 To allow local users to access PSQL without requiring a password, ensure the file `pg_hba.conf`, which (for PSQL version 10) is located in `/var/lib/pgsql/10/data`, contains the following lines.
 
@@ -90,14 +89,13 @@ If you have edited PSQL configuration files, you *must* restart PSQL for those c
      [root] # # service postgresql-10 reload
      Redirecting to /bin/systemctl reload postgresql-10.service
 
-CONFIGURING CHIMERA
--------------------
+### CONFIGURING CHIMERA
 
 Chimera is a library providing a hierarchical name space with associated meta data. Where pools in dCache store the content of files, Chimera stores the names and meta data of those files. Chimera itself stores the data in the PostgreSQL database we just set up. The properties of Chimera are defined in **/usr/share/dcache/defaults/chimera.properties**. See [Chapter 4, Chimera](config-chimera.md) for more information.
 
 
 
-### Creating users and databases for dCache
+#### Creating users and databases for dCache
 
 Create the Chimera database and user.
 
@@ -151,18 +149,17 @@ dCache can be started now.
 
 So far, no configuration of dCache is done, so only the predefined domain is started.
 
-CONFIGURING dCache
-------------------
+### CONFIGURING dCache
 
-### Terminology
+#### Terminology
 
 dCache consists of one or more *domains*. A domain in dCache is a Java Virtual Machine hosting one or more dCache *cells*. Each domain must have a name which is unique throughout the dCache instance and a cell must have a unique name within the domain hosting the cell.
 
-A *service* is an abstraction used in the dCache configuration to describe atomic units to add to a domain. It is typically implemented through one or more cells. dCache keeps lists of the domains and the services that are to be run within these domains in the *layout files*. The layout file may contain domain- and service- specific configuration values. 
+A *service* is an abstraction used in the dCache configuration to describe atomic units to add to a domain. It is typically implemented through one or more cells. dCache keeps lists of the domains and the services that are to be run within these domains in the *layout files*. The layout file may contain domain- and service-specific configuration values. 
 
 A *pool* is a cell providing physical data storage services. A *door* provides access to the data on the pools by implementing a specific data transfer protocol like FTP or NFS.
 
-### Configuration files
+#### Configuration files
 
 In the setup of dCache, there are three main places for configuration files:
 
@@ -191,7 +188,7 @@ As the files in **/usr/share/dcache/defaults/** do serve as succinct documentati
 
 
 
-### Defining domains and services
+#### Defining domains and services
 
 Domains and services are defined in the layout files. Depending on your site, you may have requirements upon the doors that you want to configure and domains within which you want to organise them.
 
@@ -233,7 +230,6 @@ This is an example for the **mylayout.conf** file of a single node dCache with s
     [namespaceDomain]
     [namespaceDomain/pnfsmanager]
     [namespaceDomain/cleaner]
-    [namespaceDomain/dir]
 
     [poolmanagerDomain]
     [poolmanagerDomain/poolmanager]
@@ -257,7 +253,7 @@ message communication between satellite domains. In a big installations it's rec
 
 The role of the domain can be changed with **dcache.broker.scheme** property, which is described in **/usr/share/dcache/defaults/dcache.properties** file.
 
-### Creating and configuring pools
+#### Creating and configuring pools
 
 dCache will need to write the files it keeps in pools. These pools are defined as services within dCache. Hence, they are added to the layout file of your dCache instance, like all other services.
 
@@ -290,7 +286,7 @@ In this example we create a pool called pool1 in the directory **`/srv/dcache/p1
 
 Adding a pool to a configuration does not modify the pool or the data in it and can thus safely be undone or repeated.
 
-### Starting dCache
+#### Starting dCache
 
 Restart dCache to start the newly configured components **dcache restart** and check the status of dCache with **dcache status**.
 
@@ -318,7 +314,7 @@ Restart dCache to start the newly configured components **dcache restart** and c
 Now you can have a look at your dCache via The Web Interface, see [the section called “The Web Interface for Monitoring dCache”:](intouch.md#the-web-interface-for-monitoring-dcache) http://<httpd.example.org>:2288/, where <httpd.example.org> is the node on which your httpd service is running. For a single node dCache this is the machine on which your dCache is running.
 
 
-### JAVA heap size
+#### JAVA heap size
 
 By default the JAVA heap size and the maximum direct buffer size are defined as
 
@@ -344,8 +340,7 @@ For optimization of your dCache you can define the Java heap size in the layout 
 >
 > If `JAVA_HOME` or `JAVA` cannot be defined as global environment variables in the operating system, then they can be defined in either **/etc/default/dcache** or **/etc/dcache.env**. These two files are sourced by the init script and allow `JAVA_HOME`, `JAVA` and `dCache_HOME` to be defined.
 
-Installing dCache on several nodes
-----------------------------------
+### Installing dCache on several nodes
 
 Installing dCache on several nodes is not much more complicated than installing it on a single node. Think about how dCache should be organised regarding services and domains. Then adapt the layout files, as described in [in the section called “Defining domains and services”](install.md#defining-domains-and-services), to the layout that you have in mind. The files **/etc/dcache/layouts/head.conf** and **/etc/dcache/layouts/pool.conf**  contain examples for a dCache head-node and a dCache pool respectively.
 
@@ -361,8 +356,7 @@ On any other nodes than the head node, the property `dcache.broker.host` has to 
 >
 > On dCache nodes running only pool services you do not need to install PostgreSQL. If your current node hosts only these services, the installation of PostgreSQL can be skipped.
 
-SECURING YOUR dCache INSTALLATION
-=================================
+## SECURING YOUR dCache INSTALLATION
 
 dCache uses the LocationManager to discover the network topology of the internal communication: to which domains this domain should connect. The domain contacts a specific host and queries the information using UDP port `11111`. The response describes how the domain should react: whether it should allow incoming connections and whether it should contact any other domains.
 
@@ -370,8 +364,7 @@ Once the topology is understood, dCache domains connect to each other to build a
 
 It is essential that both UDP and TCP port `11111` are firewalled and that only other nodes within the dCache cluster are allowed access to these ports. Failure to do so can result in remote users running arbitrary commands on any node within the dCache cluster.
 
-Upgrading a dCache Instance
-===========================
+## Upgrading a dCache Instance
 
 > **IMPORTANT**
 >

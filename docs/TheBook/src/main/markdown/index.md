@@ -1,8 +1,7 @@
 dCache Book
 ===========
 
-Table of contents
------------------
+## Table of contents
 
 -   [Preface](preface.md)
 
@@ -30,7 +29,7 @@ Table of contents
 
         -   [frontend service](config-frontend.md)
 
-        -   ftp service
+        -   [ftp service](config-ftp.md)
 
         -   [gplazma service](config-gplazma.md)
 
